@@ -61,17 +61,3 @@ def jarak_ke_poligon_km(titik: tuple[float, float], poligon: list[list[float]]) 
         return 0.0
     n = len(poligon)
     return min(_jarak_ke_ruas(titik, poligon[i], poligon[(i + 1) % n]) for i in range(n))
-
-
-def evaluasi_lapisan(titik: tuple[float, float], lapisan: list[dict]) -> dict:
-    """Status satu titik terhadap semua sub-lapisan ketinggian di satu waktu."""
-    if not lapisan:
-        return {"kena": False, "jarak_km": None, "fl_terdekat": None}
-
-    terbaik = None
-    for lap in lapisan:
-        jarak = jarak_ke_poligon_km(titik, lap["titik"])
-        if terbaik is None or jarak < terbaik[0]:
-            terbaik = (jarak, lap["fl_label"])
-    jarak, fl = terbaik
-    return {"kena": jarak == 0.0, "jarak_km": round(jarak, 1), "fl_terdekat": fl}

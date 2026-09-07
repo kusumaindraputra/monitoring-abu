@@ -70,6 +70,28 @@ wajib ikon + teks (hijau vs merah hanya berjarak deutan ΔE 4.1), linimasa adala
 filter bukan warna, waktu mengikuti zona provinsi wilayahnya, panel kiri hanya
 punya satu gulir.
 
+## Kesiapan production
+
+Analisis lengkap + status tiap butir ada di `ANALISIS-PRODUCTION.md`. Dua belas butir
+sudah dikerjakan dan diverifikasi, di antaranya:
+
+- **Gulir hantu 1.258 px** di dashboard desktop. `aside` kekurangan `position:relative`,
+  sehingga `<caption class="tersembunyi">` yang absolut menembus wadah gulir sampai ke
+  `<html>`. Aturan yang layak diingat: setiap wadah gulir wajib `position:relative`.
+- **Legenda peta bertumpuk dengan linimasa** (182 px saat jendela dikecilkan, 28 px
+  pada muat segar di 902 px). Posisinya dulu dibekukan saat peta dibuat; kini
+  dievaluasi ulang dan syaratnya dua: layout desktop DAN lebar peta >= 560 px.
+- **Stale fallback VAAC.** BOM mati tidak lagi mematikan halaman; data terakhir tetap
+  disajikan dengan penanda `pembaruan.vaac_basi`.
+- **Gzip + Cache-Control.** `/api/wilayah` 71 KB -> 14,5 KB; `/api/nasional` 38 KB -> 5 KB.
+- **Cache stampede.** 20 permintaan bersamaan kini memanggil upstream 1x, bukan 20x.
+- **Koordinat GPS lewat POST**, tidak lagi masuk access log.
+- Jalur `static/` jadi absolut, `/api/docs` ditutup, `/api/sehat` ditambahkan,
+  cabang mati MAGMA/PVMBG dibuang.
+
+Yang masih tersisa: berkas uji, pin dependensi + berkas deploy, logging, host Leaflet
+sendiri, dan keputusan penyedia tile peta (tile OSM publik melanggar Tile Usage Policy).
+
 ## Kemungkinan langkah berikutnya
 
 Belum dikerjakan, belum tentu diinginkan:

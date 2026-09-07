@@ -192,9 +192,12 @@ def sidik_jari(advisories: list[dict]) -> tuple:
 def hitung_nasional(advisories: list[dict]) -> dict:
     """Dampak seluruh advisory terhadap 508 kabupaten/kota dan 244 bandara.
 
-    Hasilnya di-cache dengan kunci sidik jari daftar advisory. Cache dipegang
-    satu gembok: dua permintaan bersamaan pada advisory baru akan menghitung
-    berurutan, bukan mengembalikan hasil setengah jadi.
+    Hasilnya di-cache dengan kunci sidik jari daftar advisory. Gembok hanya
+    melindungi BACA dan TULIS variabel cache, bukan perhitungannya - dua permintaan
+    yang datang bersamaan pada advisory baru memang menghitung paralel, lalu yang
+    terakhir selesai menimpa hasil yang identik. Itu disengaja: sapuannya hanya
+    ~6 ms untuk 15.040 uji titik, jauh lebih murah daripada menahan permintaan lain
+    di belakang gembok selama perhitungan berlangsung.
     """
     global _kunci_cache, _isi_cache
 

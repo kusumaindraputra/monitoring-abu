@@ -1,12 +1,16 @@
 """Klien untuk sumber data upstream.
 
-Hanya dua sumber yang dipakai, karena hanya dua ini yang bisa mengubah
-keputusan orang yang membuka halaman ini:
+Dua sumber, dan pembagian wewenangnya tegas:
 
-  - VAAC Darwin / BOM Australia .. poligon sebaran abu + ketinggiannya
-  - MAGMA ESDM / PVMBG ........... status resmi gunung api Indonesia
+  - VAAC Darwin / BOM Australia .. poligon sebaran abu + ketinggiannya. SATU-SATUNYA
+                                   penentu poligon, jarak, dan status.
+  - SIGMET BMKG lewat Ina-SIAM ... konfirmasi sekunder saja; tidak pernah menimpa
+                                   VAAC dan kalau gagal panelnya hilang tanpa suara.
 
-Open-Meteo (angin di kawah) dan GDACS sengaja dibuang; alasannya ada di README.
+MAGMA ESDM / PVMBG sudah DIBUANG dari kode: domain esdm.go.id membalas 403 di
+seluruh jalur dari IP mana pun yang dipakai aplikasi ini (blokir tingkat IP oleh
+WAF-nya), jadi cabang itu tidak pernah sekali pun mengembalikan data. Open-Meteo
+(angin di kawah) dan GDACS juga dibuang; alasannya ada di README.
 
 Semua fetch di-cache dengan TTL, dan waktu penarikannya disimpan supaya UI bisa
 menampilkan "data ini terakhir diperbarui kapan".
@@ -23,13 +27,12 @@ from typing import Any, Callable
 
 import httpx
 
-# Dikirim ke BOM dan MAGMA; harus memperkenalkan aplikasi ini apa adanya.
+# Dikirim ke BOM dan BMKG; harus memperkenalkan aplikasi ini apa adanya.
 UA = "abu-indonesia/1.0 (+pemantau abu vulkanik Indonesia)"
 
 BOM_ADVISORY_URL = "https://www.bom.gov.au/aviation/php/process.php"
 BOM_REFERER = "https://www.bom.gov.au/aviation/volcanic-ash/darwin-va-advisory.shtml"
 BOM_GRAPHIC_BASE = "https://www.bom.gov.au/fwo/"
-MAGMA_URL = "https://magma.esdm.go.id/v1/gunung-api/tingkat-aktivitas"
 
 # SIGMET abu vulkanik BMKG untuk FIR Indonesia, lewat sistem Ina-SIAM.
 #
@@ -50,25 +53,56 @@ KAKI_KE_METER = 0.3048
 # cache TTL + catatan waktu penarikan
 # --------------------------------------------------------------------------
 class _Cache:
+    """Cache TTL yang menyimpan entri kedaluwarsa sebagai jaring pengaman.
+
+    Dua sifat yang disengaja, keduanya penting untuk aplikasi kebencanaan:
+
+    1. ENTRI KEDALUWARSA TIDAK DIBUANG. Kalau upstream gagal, hasil lama tetap
+       disajikan (lihat `basi()`), bukan diganti error. Advisory VAAC hanya terbit
+       tiap ~6 jam, jadi data "basi 20 menit" praktis sama validnya dengan data
+       segar - jauh lebih berguna daripada halaman kosong.
+    2. SATU GEMBOK PER KUNCI selama pengambilan. Tanpa itu, semua permintaan yang
+       datang tepat setelah TTL habis akan menembak upstream serentak, masing-masing
+       dengan timeout 30 detik.
+    """
+
     def __init__(self) -> None:
         self._data: dict[str, tuple[float, Any]] = {}
         self._lock = threading.Lock()
+        self._gembok_ambil: dict[str, threading.Lock] = {}
+
+    def _gembok_untuk(self, key: str) -> threading.Lock:
+        with self._lock:
+            return self._gembok_ambil.setdefault(key, threading.Lock())
 
     def get_or_set(self, key: str, ttl: int, producer: Callable[[], Any]) -> Any:
-        now = time.time()
+        segar = self._segar(key, ttl)
+        if segar is not None:
+            return segar[1]
+
+        # Hanya satu penarik per kunci; yang lain menunggu lalu memakai hasilnya.
+        with self._gembok_untuk(key):
+            segar = self._segar(key, ttl)
+            if segar is not None:
+                return segar[1]
+            value = producer()
+            with self._lock:
+                self._data[key] = (time.time(), value)
+            return value
+
+    def _segar(self, key: str, ttl: int) -> tuple[float, Any] | None:
         with self._lock:
             hit = self._data.get(key)
-            if hit and now - hit[0] < ttl:
-                return hit[1]
-        value = producer()
+        return hit if hit and time.time() - hit[0] < ttl else None
+
+    def basi(self, key: str) -> tuple[float, Any] | None:
+        """Entri terakhir apa pun umurnya, atau None kalau memang belum pernah ada."""
         with self._lock:
-            self._data[key] = (time.time(), value)
-        return value
+            return self._data.get(key)
 
     def ditarik_pada(self, key: str) -> str | None:
         """ISO UTC kapan entri cache ini terakhir benar-benar ditarik dari upstream."""
-        with self._lock:
-            hit = self._data.get(key)
+        hit = self.basi(key)
         return iso_utc(datetime.fromtimestamp(hit[0], timezone.utc)) if hit else None
 
 
@@ -275,47 +309,55 @@ def _ambil_vaac() -> list[dict]:
     return hasil
 
 
-def ambil_vaac(ttl: int = 300) -> list[dict]:
-    """Semua advisory abu aktif dari VAAC Darwin."""
-    return _cache.get_or_set("vaac", ttl, _ambil_vaac)
+TTL_VAAC = 300
+
+# Pesan kegagalan upstream terakhir, supaya UI bisa menjelaskan KENAPA datanya basi.
+_galat_terakhir: dict[str, str] = {}
+
+
+def ambil_vaac(ttl: int = TTL_VAAC) -> list[dict]:
+    """Semua advisory abu aktif dari VAAC Darwin.
+
+    Kalau BOM tidak bisa dihubungi, hasil terakhir yang pernah berhasil ditarik
+    tetap dikembalikan - ditandai lewat `vaac_basi()` - bukan dilempar jadi error.
+    Halaman yang menampilkan data 20 menit lalu jauh lebih berguna daripada halaman
+    kosong, apalagi advisory hanya terbit tiap ~6 jam sehingga data lama masih
+    menggambarkan keadaan yang sama.
+
+    Exception hanya dilempar kalau memang belum pernah ada data sama sekali,
+    yaitu saat proses baru hidup dan panggilan pertamanya langsung gagal.
+    """
+    try:
+        hasil = _cache.get_or_set("vaac", ttl, _ambil_vaac)
+    except Exception as e:
+        basi = _cache.basi("vaac")
+        if basi is None:
+            raise
+        _galat_terakhir["vaac"] = str(e)
+        return basi[1]
+    _galat_terakhir.pop("vaac", None)
+    return hasil
+
+
+def vaac_basi(ttl: int = TTL_VAAC) -> dict:
+    """Apakah data VAAC yang sedang disajikan sudah lewat TTL.
+
+    Disimpulkan dari umur entri cache, bukan dari penanda yang ditulis saat gagal,
+    supaya dua permintaan bersamaan tidak bisa saling menimpa statusnya.
+    """
+    hit = _cache.basi("vaac")
+    if hit is None:
+        return {"basi": False, "umur_detik": None, "alasan": None}
+    umur = time.time() - hit[0]
+    return {
+        "basi": umur >= ttl,
+        "umur_detik": int(umur),
+        "alasan": _galat_terakhir.get("vaac"),
+    }
 
 
 def vaac_ditarik_pada() -> str | None:
     return _cache.ditarik_pada("vaac")
-
-
-# --------------------------------------------------------------------------
-# MAGMA ESDM / PVMBG
-# --------------------------------------------------------------------------
-def ambil_pvmbg(ttl: int = 900) -> dict:
-    """Status resmi gunung api Indonesia.
-
-    MAGMA memasang WAF yang menolak sebagian IP (termasuk banyak IP datacenter)
-    dengan HTTP 403 "Request Rejected". Kegagalan dikembalikan sebagai data,
-    bukan exception, supaya panel abu tetap jalan tanpa panel ini.
-    """
-    def _fetch() -> dict:
-        try:
-            with httpx.Client(timeout=25, follow_redirects=True, headers={
-                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                              "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                "Accept": "application/json, text/plain, */*",
-                "Accept-Language": "id-ID,id;q=0.9,en;q=0.8",
-                "Referer": "https://magma.esdm.go.id/v1",
-            }) as c:
-                r = c.get(MAGMA_URL)
-            if r.status_code != 200 or "application/json" not in r.headers.get("content-type", ""):
-                return {"tersedia": False,
-                        "alasan": f"MAGMA menolak permintaan (HTTP {r.status_code})", "data": []}
-            return {"tersedia": True, "alasan": None, "data": r.json()}
-        except Exception as e:
-            return {"tersedia": False, "alasan": f"MAGMA tidak bisa dihubungi: {e}", "data": []}
-
-    return _cache.get_or_set("pvmbg", ttl, _fetch)
-
-
-def pvmbg_ditarik_pada() -> str | None:
-    return _cache.ditarik_pada("pvmbg")
 
 
 # --------------------------------------------------------------------------
@@ -398,31 +440,5 @@ def sigmet_untuk(nama_gunung: str) -> dict | None:
     return None
 
 
-def _baris_pvmbg() -> list[dict]:
-    rows = ambil_pvmbg()["data"]
-    if isinstance(rows, dict):
-        rows = rows.get("data") or rows.get("gunung_api") or []
-    return rows if isinstance(rows, list) else []
-
-
 def _kunci(nama: str) -> str:
     return re.sub(r"[^a-z]", "", (nama or "").lower())
-
-
-def status_pvmbg(nama_gunung: str) -> dict | None:
-    """Cari satu gunung di daftar MAGMA berdasarkan nama.
-
-    Bentuk field MAGMA bisa berbeda-beda antar versi, jadi pencocokannya longgar
-    dan mengembalikan None kalau tidak ketemu, bukan menebak.
-    """
-    target = _kunci(nama_gunung)
-    for row in _baris_pvmbg():
-        nama = str(row.get("nama") or row.get("name") or row.get("gunung_api") or "")
-        if target and target in _kunci(nama):
-            return {
-                "nama": nama,
-                "level": row.get("status") or row.get("level") or row.get("tingkat_aktivitas"),
-                "laporan_url": row.get("laporan") or row.get("url"),
-                "diperbarui": row.get("updated_at") or row.get("tanggal") or row.get("waktu"),
-            }
-    return None

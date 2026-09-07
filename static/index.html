@@ -72,7 +72,14 @@
   .kerangka{display:flex;flex-direction:column;flex:0 0 auto}
   .panel-atas{padding:12px calc(12px + env(safe-area-inset-right)) 0
                       calc(12px + env(safe-area-inset-left))}
-  aside{padding:0 calc(12px + env(safe-area-inset-right)) 4px
+  /* position:relative WAJIB, bukan hiasan. Di >=900px aside jadi wadah gulir, dan
+     <caption class="tersembunyi"> di dalamnya memakai position:absolute. Elemen
+     absolut hanya dipotong oleh leluhur yang jadi CONTAINING BLOCK-nya - dan
+     overflow:auto saja tidak membuat sebuah elemen jadi containing block. Tanpa
+     baris ini caption menembus aside sampai ke <html>, dan area gulir halaman
+     ikut melar ~1.250px berisi ruang kosong. */
+  aside{position:relative;
+        padding:0 calc(12px + env(safe-area-inset-right)) 4px
                  calc(12px + env(safe-area-inset-left))}
   main{position:relative;height:46dvh;min-height:250px;max-height:460px}
   #peta{position:absolute;inset:0}
@@ -163,7 +170,7 @@
     color:var(--teks3)}
   /* Nama wilayah/bandara adalah header baris (th scope="row") demi semantik tabel,
      tapi harus tampil sebagai teks biasa, bukan seperti header kolom. */
-  tbody th{font-size:12px;font-weight:600;color:var(--teks1);text-transform:none;letter-spacing:0}
+  tbody th{font-size:12px;font-weight:600;color:var(--teks);text-transform:none;letter-spacing:0}
   .kode{font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
   tbody tr:last-child td{border-bottom:0}
   /* Tidak pernah menggulir sendiri, di ukuran layar mana pun: daftar panjang
@@ -684,8 +691,32 @@ function keping(jenis, teks, kelasTambahan) {
 /* =====================================================================
    Pengambilan data
    ===================================================================== */
-async function ambil(url) {
-  const r = await fetch(url, { headers: { Accept: "application/json" } });
+const BATAS_TUNGGU_MS = 15000;   // di atas ini, anggap jaringan menggantung
+
+/* `badan` diisi kalau permintaannya POST. Koordinat GPS dikirim lewat POST, bukan
+   query string, karena query string tercatat permanen di access log server. */
+async function ambil(url, badan) {
+  // Tanpa AbortController, koneksi yang menggantung meninggalkan tulisan "Memuat..."
+  // selamanya tanpa jalan keluar apa pun bagi pengguna.
+  const pembatal = new AbortController();
+  const jam = setTimeout(() => pembatal.abort(), BATAS_TUNGGU_MS);
+  let r;
+  try {
+    r = await fetch(url, {
+      method: badan ? "POST" : "GET",
+      headers: badan
+        ? { Accept: "application/json", "Content-Type": "application/json" }
+        : { Accept: "application/json" },
+      body: badan ? JSON.stringify(badan) : undefined,
+      signal: pembatal.signal
+    });
+  } catch (e) {
+    throw new Error(e.name === "AbortError"
+      ? "Server tidak menjawab dalam " + (BATAS_TUNGGU_MS / 1000) + " detik."
+      : "Jaringan tidak bisa dihubungi.");
+  } finally {
+    clearTimeout(jam);
+  }
   if (!r.ok) {
     let pesan = "HTTP " + r.status;
     try {
@@ -715,23 +746,7 @@ function siapkanPeta() {
   lapisAbu = L.layerGroup().addTo(peta);
   lapisGunung = L.layerGroup().addTo(peta);
 
-  // Legenda. Di layar lebar: kotak terbuka di pojok kanan bawah.
-  // Di ponsel: pindah ke kanan ATAS dan tertutup, karena pojok kanan bawah sudah
-  // dipakai atribusi OSM dan linimasa yang membentang selebar peta.
-  const lebar = window.matchMedia("(min-width:900px)").matches;
-  const legenda = L.control({ position: lebar ? "bottomright" : "topright" });
-  legenda.onAdd = function () {
-    const d = L.DomUtil.create("details", "kotak-peta legenda");
-    if (lebar) d.open = true;
-    d.innerHTML =
-      "<summary>Legenda</summary>" +
-      '<div class="brs"><span class="kotak"></span>Area abu (langkah terpilih)</div>' +
-      '<div class="brs" style="color:' + WARNA_ABU + '">' + ikon("gunung", 13) + "Gunung sumber abu</div>" +
-      '<div class="brs" style="color:var(--lokasi)">' + ikon("titik", 13) + "Lokasi Anda</div>";
-    L.DomEvent.disableClickPropagation(d);
-    return d;
-  };
-  legenda.addTo(peta);
+  tempatkanLegenda();
 
   // Kontrol linimasa (pojok kiri bawah) - linimasa adalah FILTER, bukan warna
   kontrolLinimasa = L.control({ position: "bottomleft" });
@@ -746,6 +761,64 @@ function siapkanPeta() {
   };
   kontrolLinimasa.addTo(peta);
   gambarLinimasa();
+
+  // Legenda dievaluasi ulang setiap ukuran berubah, bukan hanya sekali saat peta
+  // dibuat. Tanpa ini, halaman yang dimuat di jendela lebar lalu dikecilkan
+  // meninggalkan legenda di pojok kanan bawah dalam keadaan terbuka, menimpa
+  // linimasa yang di bawah 900px membentang selebar peta - tumpang tindih 182px.
+  //
+  // Tiga pemicu sekaligus, dan itu disengaja: masing-masing menutup celah yang
+  // lain. `resize` jendela adalah yang paling andal; event `resize` milik Leaflet
+  // ikut menangkap perubahan yang dipicu peta sendiri; ResizeObserver menangkap
+  // kasus wadah peta berubah tanpa jendela ikut berubah. Pemanggilan berulang
+  // gratis karena tempatkanLegenda() langsung keluar kalau posisinya tidak berubah.
+  addEventListener("resize", tempatkanLegenda);
+  peta.on("resize", tempatkanLegenda);
+  if (window.ResizeObserver) {
+    pengamatPeta = new ResizeObserver(tempatkanLegenda);
+    pengamatPeta.observe(peta.getContainer());
+  }
+}
+
+/* Legenda hanya boleh duduk di pojok kanan bawah kalau di sana memang ada ruang
+   di samping kontrol linimasa. DUA syarat, dan keduanya perlu:
+
+   1. Harus layout desktop. Di bawah 900px linimasa sengaja dibentangkan selebar
+      peta (lihat aturan .leaflet-bottom.leaflet-left di CSS), jadi pojok kanan
+      bawah SELALU tertutup linimasa berapa pun lebar petanya.
+   2. Peta harus cukup lebar. Di >=900px peta hanya selebar jendela dikurangi kolom
+      kiri 390px, jadi jendela 902px menyisakan peta 512px - tidak cukup untuk
+      linimasa (~340px) + legenda (~182px), dan keduanya bertumpuk 28px.
+
+   Kalau salah satu tidak terpenuhi, legenda pindah ke kanan ATAS dan ditutup:
+   menjauh dari linimasa sekaligus dari baris atribusi OSM. */
+const AMBANG_LEGENDA = 560;
+let legendaKontrol = null;
+let legendaDiBawah = null;    // posisi yang sedang terpasang; null = belum pernah
+let pengamatPeta = null;
+
+function tempatkanLegenda() {
+  if (!peta) return;
+  const diBawah = window.matchMedia("(min-width:900px)").matches &&
+                  peta.getContainer().clientWidth >= AMBANG_LEGENDA;
+  // Wajib: tanpa penjagaan ini ResizeObserver memasang ulang legenda tiap frame.
+  if (diBawah === legendaDiBawah) return;
+  legendaDiBawah = diBawah;
+
+  if (legendaKontrol) peta.removeControl(legendaKontrol);
+  legendaKontrol = L.control({ position: diBawah ? "bottomright" : "topright" });
+  legendaKontrol.onAdd = function () {
+    const d = L.DomUtil.create("details", "kotak-peta legenda");
+    d.open = diBawah;
+    d.innerHTML =
+      "<summary>Legenda</summary>" +
+      '<div class="brs"><span class="kotak"></span>Area abu (langkah terpilih)</div>' +
+      '<div class="brs" style="color:' + WARNA_ABU + '">' + ikon("gunung", 13) + "Gunung sumber abu</div>" +
+      '<div class="brs" style="color:var(--lokasi)">' + ikon("titik", 13) + "Lokasi Anda</div>";
+    L.DomEvent.disableClickPropagation(d);
+    return d;
+  };
+  legendaKontrol.addTo(peta);
 }
 
 /** Ambil semua lapisan satu gunung pada satu langkah waktu. */
@@ -1476,8 +1549,10 @@ function pasangGps() {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
-        muatLokasi("/api/lokasi?lat=" + latitude.toFixed(5) + "&lon=" + longitude.toFixed(5) +
-          "&nama=" + encodeURIComponent("Lokasi Anda"), "Menghitung status lokasi Anda…");
+        // POST, bukan query string: koordinat presisi milik pengguna tidak boleh
+        // masuk access log uvicorn maupun reverse proxy di depannya.
+        muatLokasi("/api/lokasi", "Menghitung status lokasi Anda…",
+          { lat: latitude, lon: longitude, nama: "Lokasi Anda" });
       },
       (err) => {
         let t;
@@ -1502,14 +1577,16 @@ function pasangGps() {
 /* =====================================================================
    Pemuatan data
    ===================================================================== */
-let urlLokasiTerakhir = null;
+/* Permintaan lokasi terakhir, disimpan utuh (url + badan) supaya penyegaran
+   berkala bisa mengulanginya persis - termasuk yang lewat POST. */
+let permintaanLokasiTerakhir = null;
 
-async function muatLokasi(url, pesanTunggu) {
+async function muatLokasi(url, pesanTunggu, badan) {
   const pesan = el("pesanLokasi");
   if (pesanTunggu) pesan.textContent = pesanTunggu;
   try {
-    st.lokasi = await ambil(url);
-    urlLokasiTerakhir = url;
+    st.lokasi = await ambil(url, badan);
+    permintaanLokasiTerakhir = { url: url, badan: badan };
     pesan.textContent = "";
     gambarLokasi();
     gambarPenandaLokasi();
@@ -1572,7 +1649,8 @@ async function mulai() {
   setInterval(segarkanUmur, JAM_MS);
   setInterval(async () => {
     await muatNasional(false);
-    if (urlLokasiTerakhir) await muatLokasi(urlLokasiTerakhir, "");
+    const p = permintaanLokasiTerakhir;
+    if (p) await muatLokasi(p.url, "", p.badan);
   }, SEGAR_MS);
 }
 
@@ -1580,7 +1658,11 @@ async function mulai() {
    Diukur, bukan ditebak: header bisa jadi lebih tinggi kalau teksnya membungkus. */
 function ukurHeader() {
   const h = document.querySelector("header");
-  if (h) document.documentElement.style.setProperty("--tinggi-header", h.offsetHeight + "px");
+  // getBoundingClientRect(), bukan offsetHeight: offsetHeight dibulatkan ke bilangan
+  // bulat, jadi header setinggi 64,103px tercatat 64px dan kerangka jadi 0,1px terlalu
+  // tinggi - cukup untuk memunculkan bilah gulir yang tidak menggulir apa pun.
+  if (h) document.documentElement.style.setProperty(
+    "--tinggi-header", h.getBoundingClientRect().height + "px");
 }
 /* Panel Tentang: isi baris repo, atau buang barisnya kalau REPO_URL belum diisi. */
 function gambarTentang() {

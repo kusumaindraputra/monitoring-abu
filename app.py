@@ -5,7 +5,7 @@ Australia) di sisi server, lalu menghitungnya terhadap seluruh Indonesia -
 38 provinsi, 508 kabupaten/kota, 244 bandara ber-kode IATA.
 
 Pembagian tugas antar modul:
-  sumber.py   - ambil & parse advisory VAAC (dan status PVMBG)
+  sumber.py   - ambil & parse advisory VAAC (dan SIGMET BMKG sebagai konfirmasi)
   geometri.py - titik di dalam poligon, jarak ke poligon
   wilayah.py  - daftar wilayah Indonesia (beku, dari OpenStreetMap)
   dampak.py   - sapuan nasional yang di-cache + status satu titik
@@ -17,19 +17,41 @@ JSON di bawah ini.
 
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException, Query
+import os
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 import dampak
 import sumber
 import wilayah
 
+# Jalur diturunkan dari lokasi berkas ini, BUKAN dari direktori kerja. Kalau
+# memakai jalur relatif, `StaticFiles(directory="static")` melempar RuntimeError
+# saat IMPOR - bukan saat permintaan masuk - sehingga systemd tanpa WorkingDirectory,
+# Docker dengan WORKDIR lain, atau gunicorn yang dijalankan dari direktori mana pun
+# selain root repo akan mati sebelum sempat melayani satu permintaan.
+DIR = Path(__file__).resolve().parent
+DIR_STATIC = DIR / "static"
+
+# Dokumentasi interaktif dimatikan secara bawaan di production; nyalakan dengan
+# ABU_DOCS=1 kalau memang perlu.
+_DOCS = "/api/docs" if os.environ.get("ABU_DOCS") == "1" else None
+
 app = FastAPI(
     title="Pantau Abu Vulkanik Indonesia",
     description="Sebaran abu vulkanik VAAC Darwin terhadap seluruh wilayah Indonesia.",
-    docs_url="/api/docs",
+    docs_url=_DOCS,
+    redoc_url=None,
 )
+
+# Payload JSON-nya besar dan sangat mudah dimampatkan: /api/wilayah 71 KB dan
+# /api/nasional 38 KB mentah, keduanya turun 4-5x setelah gzip.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # /api/wilayah tidak pernah berubah selama proses hidup, jadi payload-nya disusun
 # sekali saat impor - bukan dirakit ulang tiap permintaan.
@@ -44,7 +66,12 @@ PAYLOAD_WILAYAH = {
 # alat bantu bersama
 # --------------------------------------------------------------------------
 def _advisories() -> list[dict]:
-    """Advisory aktif VAAC Darwin; kegagalan upstream jadi HTTP 502 berbahasa Indonesia."""
+    """Advisory aktif VAAC Darwin.
+
+    `sumber.ambil_vaac()` sudah menyajikan hasil lama kalau BOM sedang tidak bisa
+    dihubungi, jadi 502 di sini hanya terjadi pada kasus yang benar-benar tidak
+    tertolong: proses baru hidup dan belum pernah sekali pun berhasil menarik data.
+    """
     try:
         return sumber.ambil_vaac()
     except Exception as e:
@@ -62,12 +89,18 @@ def _pembaruan(advisories: list[dict]) -> dict:
     terbit = [a["terbit_iso"] for a in advisories if a.get("terbit_iso")]
     berikutnya = [a["advisory_berikutnya_iso"] for a in advisories
                   if a.get("advisory_berikutnya_iso")]
+    # `basi` bernilai true kalau BOM sedang gagal dihubungi dan yang disajikan
+    # adalah hasil tarikan sebelumnya. Frontend memakainya untuk memberi tahu
+    # pengguna, bukan untuk menyembunyikan datanya.
+    basi = sumber.vaac_basi()
     return {
         "sekarang": sumber.sekarang_iso(),
         "vaac_ditarik": sumber.vaac_ditarik_pada(),
         "sigmet_ditarik": sumber.sigmet_ditarik_pada(),
         "terbit_terbaru": max(terbit) if terbit else None,
         "berikutnya_terdekat": min(berikutnya) if berikutnya else None,
+        "vaac_basi": basi["basi"],
+        "vaac_basi_alasan": basi["alasan"] if basi["basi"] else None,
     }
 
 
@@ -85,9 +118,29 @@ def _linimasa(adv: dict) -> list[dict]:
 # endpoint
 # --------------------------------------------------------------------------
 @app.get("/api/wilayah")
-def daftar_wilayah():
-    """Daftar wilayah Indonesia untuk pencarian dan penanda peta di frontend."""
+def daftar_wilayah(response: Response):
+    """Daftar wilayah Indonesia untuk pencarian dan penanda peta di frontend.
+
+    Isinya beku selama proses hidup (lihat PAYLOAD_WILAYAH), dan ini payload
+    terbesar yang ditarik tiap muat halaman - 71 KB sebelum gzip. Jadi boleh
+    di-cache lama di peramban; kalau daftarnya berubah, itu selalu berbarengan
+    dengan penerapan versi baru.
+    """
+    response.headers["Cache-Control"] = "public, max-age=86400"
     return PAYLOAD_WILAYAH
+
+
+@app.get("/api/sehat")
+def sehat():
+    """Health check untuk load balancer.
+
+    Sengaja TIDAK menghubungi BOM: kesehatan proses ini tidak boleh ditentukan oleh
+    ketersediaan pihak ketiga, kalau tidak load balancer akan menurunkan instans yang
+    sebenarnya sehat dan masih sanggup menyajikan data dari cache.
+    """
+    basi = sumber.vaac_basi()
+    return {"status": "ok", "vaac_ditarik": sumber.vaac_ditarik_pada(),
+            "vaac_basi": basi["basi"], "umur_detik": basi["umur_detik"]}
 
 
 @app.get("/api/nasional")
@@ -141,6 +194,26 @@ def nasional():
     }
 
 
+class Titik(BaseModel):
+    """Badan permintaan POST /api/lokasi."""
+    lat: float | None = None
+    lon: float | None = None
+    nama: str | None = None
+    kabkota: str | None = None
+    provinsi: str | None = None
+
+
+@app.post("/api/lokasi")
+def lokasi_post(t: Titik):
+    """Sama persis dengan GET /api/lokasi, tapi parameternya di badan permintaan.
+
+    Ini yang dipakai frontend untuk koordinat GPS. Query string tercatat permanen
+    di access log uvicorn dan di setiap reverse proxy di depannya, jadi koordinat
+    presisi milik pengguna tidak boleh lewat sana. Badan POST tidak ikut tercatat.
+    """
+    return _lokasi(t.kabkota, t.provinsi, t.lat, t.lon, t.nama)
+
+
 @app.get("/api/lokasi")
 def lokasi(
     kabkota: str | None = Query(None, description="Nama kabupaten/kota, mis. Bogor"),
@@ -150,7 +223,17 @@ def lokasi(
     lon: float | None = Query(None, description="Bujur, -180..180"),
     nama: str | None = Query(None, description="Label bebas untuk koordinat"),
 ):
-    """Status satu lokasi: kabupaten/kota bernama, atau koordinat GPS sembarang."""
+    """Status satu lokasi: kabupaten/kota bernama, atau koordinat GPS sembarang.
+
+    Untuk koordinat milik pengguna, pakai POST /api/lokasi - lihat alasannya di sana.
+    Bentuk GET ini dipertahankan untuk pemanggilan manual (curl, skrip verifikasi)
+    dan untuk pencarian kabupaten/kota, yang bukan data pribadi.
+    """
+    return _lokasi(kabkota, provinsi, lat, lon, nama)
+
+
+def _lokasi(kabkota: str | None, provinsi: str | None,
+            lat: float | None, lon: float | None, nama: str | None):
     if kabkota:
         target = kabkota.strip().lower()
         # `provinsi` opsional: ada nama yang dipakai dua daerah sekaligus (Banjar di
@@ -215,9 +298,9 @@ def detail_gunung(kode: str):
     raise HTTPException(404, f"Tidak ada advisory abu aktif untuk kode gunung '{kode}'.")
 
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=DIR_STATIC), name="static")
 
 
 @app.get("/")
 def beranda():
-    return FileResponse("static/index.html")
+    return FileResponse(DIR_STATIC / "index.html")
