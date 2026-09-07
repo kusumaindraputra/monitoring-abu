@@ -33,9 +33,18 @@
   :focus-visible{outline:2px solid #9dc3ef;outline-offset:2px}
 
   /* ---------------- header ---------------- */
-  header{display:flex;flex-direction:column;gap:8px;
+  /* Grid, bukan flex, supaya tombol "?" bisa dipatok di pojok kanan atas baik saat
+     header menumpuk (ponsel) maupun sebaris (desktop). */
+  header{display:grid;gap:8px 12px;grid-template-columns:1fr auto;align-items:start;
     padding:10px calc(12px + env(safe-area-inset-right)) 10px calc(12px + env(safe-area-inset-left));
     background:var(--panel);border-bottom:1px solid var(--garis)}
+  .kepala-kanan{grid-column:1 / -1}
+  .tanya{grid-column:2;grid-row:1;align-self:start;justify-self:end;
+    width:40px;height:40px;flex:none;display:inline-flex;align-items:center;
+    justify-content:center;border-radius:50%;border:1px solid var(--garis2);
+    background:var(--panel2);color:var(--teks2);cursor:pointer;padding:0}
+  .tanya:hover{background:#33332f;color:var(--teks);border-color:#6a6a5e}
+  .tanya svg{width:21px;height:21px}
   h1{margin:0;font-size:15px;font-weight:800;letter-spacing:.2px}
   /* Baris cakupan ("38 provinsi · 508 kab/kota · ...") memakan dua baris penuh di
      ponsel padahal cuma keterangan; disembunyikan sampai layar cukup lebar. */
@@ -157,10 +166,22 @@
   tbody th{font-size:12px;font-weight:600;color:var(--teks1);text-transform:none;letter-spacing:0}
   .kode{font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
   tbody tr:last-child td{border-bottom:0}
-  /* Di ponsel wadah ini TIDAK menggulir sendiri - halamanlah yang menggulir.
-     Gulir bersarang di layar sentuh membuat orang tidak sengaja menggulir kotak
-     dalam padahal maksudnya menggulir halaman. Batas tinggi dipasang lagi >=900px. */
+  /* Tidak pernah menggulir sendiri, di ukuran layar mana pun: daftar panjang
+     dipenggal jadi halaman. Gulir di dalam gulir membuat orang tidak sengaja
+     menggulir kotak dalam padahal maksudnya menggulir halaman. */
   .gulir{margin:0 -3px;padding:0 3px}
+
+  .ringkas-prov{margin:0 0 8px;font-size:11px;color:var(--teks3);line-height:1.5}
+  .pager{display:flex;align-items:center;justify-content:center;gap:10px;
+    margin-top:9px;padding-top:8px;border-top:1px solid var(--garis)}
+  .pager .pg{width:40px;height:40px;flex:none;display:inline-flex;align-items:center;
+    justify-content:center;border-radius:8px;border:1px solid var(--garis2);
+    background:var(--panel2);color:var(--teks);font-size:17px;line-height:1;cursor:pointer;
+    padding:0}
+  .pager .pg:hover:not(:disabled){background:#33332f;border-color:#6a6a5e}
+  .pager .pg:disabled{opacity:.35;cursor:default}
+  .pager .pg-teks{font-size:11.5px;color:var(--teks3);font-variant-numeric:tabular-nums;
+    white-space:nowrap}
 
   /* Tabel dua kolom untuk kolom samping yang sempit (~330px).
      Tiga kolom tidak muat: "permukaan - 4.600 m" saja sudah selebar satu kolom,
@@ -181,36 +202,13 @@
   .pmk{color:var(--bahaya);font-weight:700;display:inline;white-space:nowrap}
   .pmk svg{width:10px;height:10px;vertical-align:-1px;margin-right:2px}
 
-  details.prov{border-top:1px solid var(--garis)}
-  details.prov:first-of-type{border-top:0}
-  /* flex-wrap membuat jumlahnya turun utuh ke baris sendiri kalau nama provinsinya
-     panjang ("Daerah Khusus Ibukota Jakarta"), bukan ikut membungkus berselang-seling
-     di sebelah nama. */
-  details.prov>summary{cursor:pointer;list-style:none;padding:11px 2px;display:flex;
-    flex-wrap:wrap;gap:2px 8px;align-items:baseline;font-size:12.5px;font-weight:700}
-  details.prov>summary .nm{flex:1 1 auto;min-width:0}
-  details.prov>summary::-webkit-details-marker{display:none}
-  details.prov>summary::before{content:"\25B8";color:var(--teks3);margin-right:7px;font-size:10px;
-    display:inline-block;transition:transform .12s}
-  details.prov[open]>summary::before{transform:rotate(90deg)}
-  /* Nama provinsi panjang ("Daerah Khusus Ibukota Jakarta") harus boleh membungkus
-     tanpa menabrak jumlahnya; karena itu jumlahnya rata kanan dan ikut membungkus. */
-  details.prov>summary .jml{flex:0 0 auto;margin-left:auto;font-size:10.5px;font-weight:600;
-    color:var(--teks3);text-align:right;line-height:1.35;white-space:nowrap}
-  details.prov .isi{padding:0 2px 8px 8px}
+  /* Gaya seksi buka-tutup per provinsi dihapus: daftar wilayah kini rata dan
+     berhalaman, tidak lagi dikelompokkan dalam <details>. */
 
   details.mentah>summary{cursor:pointer;font-size:11.5px;color:var(--teks2);padding:14px 0}
   pre.vaa{margin:6px 0 0;padding:9px;background:var(--dasar);border:1px solid var(--garis);
     border-radius:8px;font-size:10.5px;line-height:1.5;color:var(--teks2);white-space:pre-wrap;
     max-height:230px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-
-  footer{border-top:1px solid var(--garis);font-size:11.5px;
-    color:var(--teks3);line-height:1.65;background:var(--panel);
-    padding:15px calc(16px + env(safe-area-inset-right))
-            calc(26px + env(safe-area-inset-bottom))
-            calc(16px + env(safe-area-inset-left))}
-  footer b{color:var(--teks2)}
-  footer p{margin:0 0 8px;max-width:110ch}
 
   /* ---------------- peta ---------------- */
   .leaflet-container{background:#111110;font:inherit}
@@ -284,9 +282,10 @@
   @media (min-width:900px){
     h1{font-size:16px}
     h1 small{display:block}
-    header{flex-direction:row;flex-wrap:wrap;gap:12px 18px;align-items:center;
-      justify-content:space-between;padding:11px 16px}
-    .kepala-kanan{justify-content:flex-end}
+    header{grid-template-columns:auto 1fr auto;align-items:center;gap:12px 18px;
+      padding:11px 16px}
+    .kepala-kanan{grid-column:2;grid-row:1;justify-content:flex-end}
+    .tanya{grid-column:3;grid-row:1;align-self:center;width:36px;height:36px}
     #jamPembaruan{text-align:right}
 
     /* Tinggi dikunci ke layar supaya kolom kiri menggulir sendiri dan peta tetap
@@ -303,8 +302,9 @@
     .tombol{min-height:0;padding:9px 12px;font-size:13px}
     .cari input{min-height:0;padding:9px 11px;font-size:13px}
     .saran li{padding:7px 9px;font-size:13px}
-    .gulir{max-height:340px;overflow-y:auto}
-    details.prov>summary{padding:7px 2px}
+    .pager .pg{width:32px;height:32px}
+    /* Tidak ada lagi wadah gulir di dalam panel: daftar panjang dipenggal jadi
+       halaman, jadi panel kiri hanya punya SATU gulir, yaitu dirinya sendiri. */
     .gunung{padding:9px 10px}
 
     /* kontrol peta kembali jadi kotak mengambang di pojok */
@@ -318,6 +318,32 @@
     .segmen{flex:0 0 auto}
     .segmen button{flex:0 0 auto;padding:6px 10px}
     .putar{width:38px;height:38px}
+  }
+
+  /* ---------------- dialog Tentang ----------------
+     Memakai <dialog> asli supaya Escape, penguncian fokus, dan latar modal
+     ditangani peramban - bukan ditiru sendiri dengan div dan tabindex. */
+  dialog#dlgTentang{padding:0;border:1px solid var(--garis2);border-radius:14px;
+    background:var(--panel);color:var(--teks);max-width:min(560px,calc(100vw - 24px));
+    width:100%;max-height:min(80dvh,720px);overflow:hidden;
+    box-shadow:0 24px 60px rgba(0,0,0,.6)}
+  dialog#dlgTentang::backdrop{background:rgba(0,0,0,.62)}
+  .dlg-kepala{display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:13px 15px;border-bottom:1px solid var(--garis);position:sticky;top:0;
+    background:var(--panel)}
+  .dlg-kepala h2{margin:0;font-size:14px;font-weight:800}
+  .dlg-tutup{width:36px;height:36px;flex:none;display:inline-flex;align-items:center;
+    justify-content:center;border-radius:9px;border:1px solid var(--garis2);
+    background:var(--panel2);color:var(--teks2);cursor:pointer;padding:0}
+  .dlg-tutup:hover{background:#33332f;color:var(--teks)}
+  .dlg-tutup svg{width:17px;height:17px}
+  /* Satu-satunya wadah gulir di dialog; isinya panjang dan itu wajar untuk modal. */
+  .dlg-isi{padding:14px 15px calc(16px + env(safe-area-inset-bottom));
+    overflow-y:auto;max-height:calc(min(80dvh,720px) - 63px)}
+  @media (max-width:559px){
+    dialog#dlgTentang{max-height:92dvh;border-radius:14px 14px 0 0;
+      margin:auto auto 0;max-width:100vw}
+    .dlg-isi{max-height:calc(92dvh - 63px)}
   }
 
   /* hanya untuk pembaca layar */
@@ -339,6 +365,15 @@
     <div id="lencanaNasional" class="lencana" role="status" aria-live="polite">Memuat data&hellip;</div>
     <div id="jamPembaruan">&nbsp;</div>
   </div>
+  <button type="button" id="tombolTentang" class="tanya"
+          aria-label="Tentang aplikasi dan sumber data" title="Tentang &amp; sumber data">
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"></circle>
+      <path d="M9.2 9.1a2.9 2.9 0 015.6 1c0 1.9-2.8 2.4-2.8 4.4"></path>
+      <line x1="12" y1="17.6" x2="12" y2="17.62"></line>
+    </svg>
+  </button>
 </header>
 
 <div class="kerangka">
@@ -414,9 +449,18 @@
       <div class="gulir" id="isiBandara"><p class="ket redup" style="margin:0">Memuat&hellip;</p></div>
     </section>
 
-    <!-- (g) TENTANG -->
-    <section class="kartu" aria-labelledby="judulTentang" id="tentang">
-      <h2 class="judul" id="judulTentang">Tentang</h2>
+  </aside>
+</div>
+
+<dialog id="dlgTentang" aria-labelledby="judulTentang">
+  <div class="dlg-kepala">
+    <h2 id="judulTentang">Tentang &amp; sumber data</h2>
+    <button type="button" id="tutupTentang" class="dlg-tutup" aria-label="Tutup">
+      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+    </button>
+  </div>
+  <div class="dlg-isi">
       <p class="ket" style="margin:0 0 10px">
         Memetakan sebaran abu vulkanik terhadap seluruh Indonesia &mdash; 38 provinsi,
         508 kabupaten/kota dan 244 bandara &mdash; sekarang dan dalam prakiraan 18 jam
@@ -455,15 +499,8 @@
         </p>
       </div>
       <div id="daftarMentah"><p class="ket redup" style="margin:0">Memuat&hellip;</p></div>
-    </section>
-  </aside>
-</div>
-
-<footer>
-  <p>Data: VAAC Darwin (BOM Australia) &middot; PVMBG/MAGMA Indonesia &middot; BMKG Ina-SIAM
-  &middot; OpenStreetMap (ODbL). Bukan produk resmi &mdash; rinciannya di
-  <a href="#tentang">Tentang</a>.</p>
-</footer>
+  </div>
+</dialog>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
@@ -500,8 +537,15 @@ const st = {
   memutar: false,
   jamPutar: null,
   sorotSaran: -1,
-  saranTampil: []
+  saranTampil: [],
+  halWilayah: 1,        // halaman aktif daftar wilayah terdampak
+  halBandara: 1         // halaman aktif daftar bandara terdampak
 };
+
+// Daftar dipenggal jadi halaman, bukan digulir. Wadah gulir di dalam halaman yang
+// juga menggulir bikin orang tidak sengaja menggulir kotak dalam - dan di layar
+// sentuh nyaris tidak bisa dihindari.
+const PER_HALAMAN = 8;
 
 /* ---------- pembantu kecil ---------- */
 const el = (id) => document.getElementById(id);
@@ -1169,6 +1213,29 @@ function gambarDaftarGunung(paksa) {
 /* =====================================================================
    (e) Wilayah terdampak, dikelompokkan per provinsi
    ===================================================================== */
+/** Potong satu daftar jadi halaman, sekalian menjepit nomor halaman yang kebablasan
+    (mis. daftar menyusut setelah advisory baru terbit). */
+function penggal(daftar, halaman) {
+  const total = Math.max(1, Math.ceil(daftar.length / PER_HALAMAN));
+  const h = Math.min(Math.max(1, halaman || 1), total);
+  return { h: h, total: total, isi: daftar.slice((h - 1) * PER_HALAMAN, h * PER_HALAMAN) };
+}
+
+/** Kendali halaman: ‹  "9–16 dari 63"  › . Kosong kalau cuma satu halaman. */
+function pager(kunci, potong, jumlah, satuan) {
+  if (potong.total <= 1) return "";
+  const dari = (potong.h - 1) * PER_HALAMAN + 1;
+  const sampai = Math.min(potong.h * PER_HALAMAN, jumlah);
+  return '<div class="pager" role="group" aria-label="Navigasi halaman ' + esc(satuan) + '">' +
+    '<button type="button" class="pg" data-pager="' + esc(kunci) + '" data-arah="-1"' +
+    (potong.h <= 1 ? " disabled" : "") + ' aria-label="Halaman sebelumnya">&lsaquo;</button>' +
+    '<span class="pg-teks" aria-live="polite">' + esc(angka(dari)) + "&ndash;" +
+    esc(angka(sampai)) + " dari " + esc(angka(jumlah)) + "</span>" +
+    '<button type="button" class="pg" data-pager="' + esc(kunci) + '" data-arah="1"' +
+    (potong.h >= potong.total ? " disabled" : "") + ' aria-label="Halaman berikutnya">&rsaquo;</button>' +
+    "</div>";
+}
+
 function gambarWilayah() {
   const wadah = el("isiWilayah");
   const d = st.nasional;
@@ -1183,38 +1250,32 @@ function gambarWilayah() {
     return;
   }
 
-  // kelompokkan (urutan kabkota dari server sudah per provinsi lalu nama)
-  const grup = new Map();
-  kab.forEach((k) => {
-    if (!grup.has(k.provinsi)) grup.set(k.provinsi, []);
-    grup.get(k.provinsi).push(k);
-  });
+  // Pengelompokan per provinsi diringkas jadi satu baris di atas tabel. Sebelumnya
+  // tiap provinsi punya seksi buka-tutup sendiri, tapi itu memaksa wadah gulir di
+  // dalam panel yang juga menggulir. Angkanya tetap terbaca, tanpa gulir bersarang.
+  const ringkas = prov.length
+    ? prov.slice(0, 3).map((x) => esc(x.nama) + " " + esc(angka(x.jumlah_kabkota))).join(" &middot; ") +
+      (prov.length > 3 ? " &middot; +" + esc(angka(prov.length - 3)) + " provinsi lagi" : "")
+    : "";
 
-  // urutkan provinsi mengikuti urutan terdampak.provinsi (jumlah desc)
-  const urut = prov.length ? prov.map((p) => p.nama).filter((n) => grup.has(n)) : [];
-  grup.forEach((_, n) => { if (urut.indexOf(n) < 0) urut.push(n); });
+  const potong = penggal(kab, st.halWilayah);
+  st.halWilayah = potong.h;
 
-  wadah.innerHTML = urut.map((namaProv, i) => {
-    const isi = grup.get(namaProv) || [];
-    const adaSekarang = isi.some((k) => k.kunci_pertama === "obs");
-    return '<details class="prov"' + (i === 0 ? " open" : "") + ">" +
-      '<summary><span class="nm">' + esc(namaProv) + "</span>" +
-      '<span class="jml">' + esc(angka(isi.length)) + " kab/kota" +
-      (adaSekarang ? " · ada abu sekarang" : "") + "</span></summary>" +
-      '<div class="isi"><table class="tbl2"><caption class="tersembunyi">' +
-      "Kabupaten/kota terdampak di " + esc(namaProv) +
-      '</caption><thead><tr><th scope="col">Kab/Kota</th>' +
-      '<th scope="col">Mulai</th></tr></thead><tbody>' +
-      isi.map((k) =>
-        '<tr><th scope="row">' + esc(k.nama) +
-        '<span class="sub">' + esc(k.gunung) + " &middot; " + tinggiRingkas(k) + "</span></th>" +
-        '<td>' + esc(k.label_pertama) +
-        '<span class="sub angka">' +
-        esc(k.berlaku_pertama ? waktuLokal(k.berlaku_pertama, false, zonaProvinsi(k.provinsi)) : "—") +
-        "</span></td></tr>"
-      ).join("") +
-      "</tbody></table></div></details>";
-  }).join("");
+  wadah.innerHTML =
+    (ringkas ? '<p class="ringkas-prov">' + ringkas + "</p>" : "") +
+    '<table class="tbl2"><caption class="tersembunyi">' +
+    "Kabupaten/kota yang berada di dalam area abu</caption>" +
+    '<thead><tr><th scope="col">Kab/Kota</th><th scope="col">Mulai</th></tr></thead><tbody>' +
+    potong.isi.map((k) =>
+      '<tr><th scope="row">' + esc(k.nama) +
+      '<span class="sub">' + esc(k.provinsi) + " &middot; " + tinggiRingkas(k) + "</span></th>" +
+      "<td>" + esc(k.label_pertama) +
+      '<span class="sub angka">' +
+      esc(k.berlaku_pertama ? waktuLokal(k.berlaku_pertama, false, zonaProvinsi(k.provinsi)) : "—") +
+      "</span></td></tr>"
+    ).join("") +
+    "</tbody></table>" +
+    pager("wilayah", potong, kab.length, "wilayah terdampak");
 }
 
 /* =====================================================================
@@ -1229,19 +1290,23 @@ function gambarBandara() {
       "Tidak ada bandara yang berada di dalam area abu dalam 18 jam ke depan.</p>";
     return;
   }
+  const potong = penggal(bnd, st.halBandara);
+  st.halBandara = potong.h;
+
   wadah.innerHTML =
     '<table class="tbl2"><caption class="tersembunyi">' +
     "Bandara yang berada di dalam area abu</caption>" +
     '<thead><tr><th scope="col">Bandara</th>' +
     '<th scope="col">Masuk area abu</th></tr></thead><tbody>' +
-    bnd.map((b) =>
+    potong.isi.map((b) =>
       '<tr><th scope="row"><span class="kode">' + esc(b.iata) + "</span> " + esc(b.nama) +
       '<span class="sub">' + esc(b.gunung) + " &middot; " + tinggiRingkas(b) + "</span></th>" +
       "<td>" + esc(b.label_pertama) +
       '<span class="sub angka">' +
       esc(b.berlaku_pertama ? waktuLokal(b.berlaku_pertama, false, zonaProvinsi(b.provinsi)) : "—") +
       "</span></td></tr>"
-    ).join("") + "</tbody></table>";
+    ).join("") + "</tbody></table>" +
+    pager("bandara", potong, bnd.length, "bandara terdampak");
 }
 
 /* =====================================================================
@@ -1528,6 +1593,39 @@ function gambarTentang() {
     esc(tampil) + "</a>";
 }
 gambarTentang();
+
+/* Klik tombol halaman. Didelegasikan ke document karena tabelnya digambar ulang
+   setiap penyegaran, jadi memasang listener ke tombolnya sendiri akan lepas. */
+document.addEventListener("click", (e) => {
+  const b = e.target.closest && e.target.closest("button.pg");
+  if (!b || b.disabled) return;
+  const arah = Number(b.dataset.arah) || 0;
+  if (b.dataset.pager === "wilayah") { st.halWilayah += arah; gambarWilayah(); }
+  else if (b.dataset.pager === "bandara") { st.halBandara += arah; gambarBandara(); }
+});
+
+/* Dialog Tentang. <dialog> asli menangani Escape, penguncian fokus, latar modal,
+   dan pengembalian fokus ke tombol pemanggil - jadi yang perlu ditulis hanya
+   pembuka, penutup, dan klik di luar kotak. */
+(function pasangDialogTentang() {
+  const dlg = el("dlgTentang");
+  const buka = el("tombolTentang");
+  const tutup = el("tutupTentang");
+  if (!dlg || !buka) return;
+  buka.addEventListener("click", () => {
+    if (typeof dlg.showModal === "function") dlg.showModal();
+    else dlg.setAttribute("open", "");     // peramban lawas: tampil non-modal
+  });
+  if (tutup) tutup.addEventListener("click", () => dlg.close());
+  // klik pada latar (di luar kotak dialog) ikut menutup
+  dlg.addEventListener("click", (e) => {
+    if (e.target !== dlg) return;          // klik di dalam isi tidak menutup
+    const k = dlg.getBoundingClientRect();
+    const diLuar = e.clientX < k.left || e.clientX > k.right ||
+                   e.clientY < k.top || e.clientY > k.bottom;
+    if (diLuar) dlg.close();
+  });
+})();
 
 ukurHeader();
 addEventListener("resize", ukurHeader);

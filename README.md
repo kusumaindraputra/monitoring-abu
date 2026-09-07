@@ -309,6 +309,33 @@ Kualitasnya sendiri bagus: 5 dari 5 permintaan sukses dalam 0,2–0,3 detik tanp
 limit, dan kelima VA SIGMET-nya cocok persis dengan kelima gunung yang sedang
 beradvisory di VAAC.
 
+### Panel kiri: paging, bukan gulir dalam gulir
+
+Panel kiri hanya punya **satu** wadah gulir, yaitu dirinya sendiri. Daftar wilayah dan
+bandara terdampak dipenggal jadi halaman 8 baris dengan kendali `‹ 9–16 dari 63 ›`,
+bukan diberi `max-height` + `overflow-y:auto` sendiri. Gulir di dalam gulir membuat
+orang tidak sengaja menggulir kotak dalam padahal maksudnya menggulir halaman — dan di
+layar sentuh itu nyaris tidak bisa dihindari.
+
+Pengelompokan per provinsi yang dulu memakai seksi buka-tutup diganti satu baris
+ringkas di atas tabel (*"Jawa Barat 26 · Lampung 15 · Banten 8 · +6 provinsi lagi"*),
+sehingga angkanya tetap terbaca tanpa memaksa wadah gulir kedua.
+
+Nomor halaman dijepit otomatis kalau daftarnya menyusut setelah advisory baru terbit,
+jadi tidak pernah tersangkut di halaman kosong.
+
+### Tentang: dialog, bukan seksi dan footer
+
+Footer dihapus. Panel "Tentang" dikeluarkan dari daftar panel kiri dan dipindah ke
+dialog yang dipanggil tombol **?** di pojok kanan atas navbar. Isinya: deskripsi
+singkat, alamat repositori, nama pembuat, seluruh keterangan sumber data, dan teks VA
+ADVISORY asli per gunung.
+
+Memakai elemen `<dialog>` asli, bukan tiruan dari `div` + `tabindex`: Escape, penguncian
+fokus, latar modal, dan pengembalian fokus ke tombol pemanggil ditangani peramban.
+Yang ditulis sendiri hanya pembuka, penutup, dan klik-latar-untuk-menutup. Keempatnya
+diverifikasi dengan interaksi sungguhan, bukan event sintetis.
+
 ### Zona waktu
 
 Indonesia punya tiga zona dan aplikasi ini nasional, jadi menampilkan semuanya sebagai
