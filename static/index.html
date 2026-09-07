@@ -1,0 +1,1549 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pantau Abu Vulkanik Indonesia</title>
+<meta name="description" content="Sebaran abu vulkanik di seluruh Indonesia menurut VA ADVISORY VAAC Darwin (BOM Australia): wilayah, bandara, dan ketinggian abu, dengan prakiraan sampai 18 jam ke depan.">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root{
+    /* permukaan gelap */
+    --dasar:#1a1a19; --panel:#232321; --panel2:#2b2b28; --garis:#383832; --garis2:#4a4a42;
+    /* teks */
+    --teks:#ffffff; --teks2:#c3c2b7; --teks3:#8a8a80;
+    /* satu-satunya warna abu: semua gunung memakai warna yang sama */
+    --abu:#d03b3b;
+    /* tiga status keadaan */
+    --aman:#0ca30c; --akan:#fab219; --bahaya:#d03b3b;
+    /* penanda lokasi pengguna (identitas, bukan status) */
+    --lokasi:#5aa9e6;
+  }
+  *{box-sizing:border-box}
+  html{height:100%}
+  /* dvh, bukan vh: di peramban ponsel bilah alamat yang muncul-hilang membuat
+     100vh lebih tinggi dari layar sebenarnya sehingga isi terpotong. */
+  body{margin:0;min-height:100dvh;display:flex;flex-direction:column;
+    background:var(--dasar);color:var(--teks);
+    font-family:ui-sans-serif,system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;
+    -webkit-tap-highlight-color:transparent}
+  a{color:#9dc3ef}
+  button{font-family:inherit;font-size:inherit;color:inherit}
+  :focus-visible{outline:2px solid #9dc3ef;outline-offset:2px}
+
+  /* ---------------- header ---------------- */
+  header{display:flex;flex-direction:column;gap:8px;
+    padding:10px calc(12px + env(safe-area-inset-right)) 10px calc(12px + env(safe-area-inset-left));
+    background:var(--panel);border-bottom:1px solid var(--garis)}
+  h1{margin:0;font-size:15px;font-weight:800;letter-spacing:.2px}
+  /* Baris cakupan ("38 provinsi · 508 kab/kota · ...") memakan dua baris penuh di
+     ponsel padahal cuma keterangan; disembunyikan sampai layar cukup lebar. */
+  h1 small{display:none;margin-top:2px;font-size:10px;font-weight:500;letter-spacing:.6px;
+    text-transform:uppercase;color:var(--teks3)}
+  .kepala-kanan{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center}
+  #jamPembaruan{font-size:11px;color:var(--teks3);line-height:1.5}
+  #jamPembaruan b{color:var(--teks2);font-weight:600}
+
+  /* lencana status: SELALU ikon + teks, warna hanya penguat */
+  .lencana{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:999px;
+    border:1px solid var(--garis);background:var(--panel2);font-size:12px;font-weight:700;
+    color:var(--teks2);white-space:nowrap}
+  .lencana svg{flex:none;width:15px;height:15px}
+  .lencana.aman{color:var(--aman);border-color:rgba(12,163,12,.5);background:rgba(12,163,12,.13)}
+  .lencana.akan{color:var(--akan);border-color:rgba(250,178,25,.5);background:rgba(250,178,25,.13)}
+  .lencana.bahaya{color:var(--bahaya);border-color:rgba(208,59,59,.5);background:rgba(208,59,59,.13)}
+
+  /* ---------------- kerangka (mobile-first) ----------------
+     Urutan DOM = urutan ponsel dan sekaligus urutan prioritas pertanyaan:
+       panel-atas (pilih lokasi + jawaban) -> peta -> aside (rincian).
+     Di ponsel semuanya mengalir menurun dan halamanlah yang menggulir; tidak ada
+     wadah gulir bersarang, karena gulir di dalam gulir menyusahkan di layar sentuh.
+     Tata letak dua kolom baru muncul pada >=900px. */
+  .kerangka{display:flex;flex-direction:column;flex:0 0 auto}
+  .panel-atas{padding:12px calc(12px + env(safe-area-inset-right)) 0
+                      calc(12px + env(safe-area-inset-left))}
+  aside{padding:0 calc(12px + env(safe-area-inset-right)) 4px
+                 calc(12px + env(safe-area-inset-left))}
+  main{position:relative;height:46dvh;min-height:250px;max-height:460px}
+  #peta{position:absolute;inset:0}
+
+  /* ---------------- kartu ---------------- */
+  .kartu{background:var(--panel);border:1px solid var(--garis);border-radius:11px;
+    padding:13px;margin-bottom:12px}
+  .kartu.tegas{border-color:rgba(208,59,59,.5);background:rgba(208,59,59,.07)}
+  .kartu.hati{border-color:rgba(250,178,25,.45);background:rgba(250,178,25,.06)}
+  .judul{margin:0 0 9px;font-size:10px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;
+    color:var(--teks3);display:flex;gap:8px;justify-content:space-between;align-items:baseline}
+  .judul .sisip{font-size:10px;font-weight:600;letter-spacing:.2px;text-transform:none;color:var(--teks3)}
+  .ket{font-size:12px;color:var(--teks2)}
+  .redup{color:var(--teks3)}
+  .angka{font-variant-numeric:tabular-nums}
+
+  /* ---------------- pilih lokasi ---------------- */
+  .tombol{display:inline-flex;align-items:center;gap:8px;width:100%;justify-content:center;
+    min-height:44px;padding:11px 12px;border-radius:9px;border:1px solid var(--garis2);
+    background:var(--panel2);color:var(--teks);font-size:14px;font-weight:600;cursor:pointer}
+  .tombol:hover{border-color:#6a6a5e;background:#333330}
+  .tombol svg{width:15px;height:15px;flex:none}
+  .cari{position:relative;margin-top:9px}
+  /* 16px wajib: di bawah itu iOS Safari otomatis memperbesar halaman begitu
+     kotak isian difokus, dan halaman tidak pernah kembali ke skala semula. */
+  .cari input{width:100%;min-height:44px;padding:11px;border-radius:9px;
+    border:1px solid var(--garis);background:var(--panel2);color:var(--teks);
+    font-size:16px;font-family:inherit}
+  .cari input::placeholder{color:var(--teks3)}
+  .saran{position:absolute;z-index:1200;left:0;right:0;top:calc(100% + 4px);margin:0;padding:4px;
+    list-style:none;max-height:246px;overflow-y:auto;background:#2c2c29;border:1px solid var(--garis2);
+    border-radius:9px;box-shadow:0 12px 28px rgba(0,0,0,.55)}
+  .saran li{padding:11px 9px;border-radius:6px;cursor:pointer;font-size:14px;display:flex;
+    justify-content:space-between;gap:10px;align-items:baseline}
+  .saran li .prov{font-size:11px;color:var(--teks3);white-space:nowrap}
+  .saran li[aria-selected="true"],.saran li:hover{background:#3b3b36}
+  .saran li.kosong{cursor:default;color:var(--teks3);justify-content:flex-start}
+
+  /* ---------------- jawaban besar ---------------- */
+  .jawab{display:flex;gap:11px;align-items:flex-start}
+  .jawab svg{width:30px;height:30px;flex:none;margin-top:1px}
+  .jawab .teks{min-width:0}
+  .jawab .besar{font-size:21px;font-weight:800;line-height:1.15;letter-spacing:-.2px}
+  .jawab .besar.aman{color:var(--aman)}
+  .jawab .besar.akan{color:var(--akan)}
+  .jawab .besar.bahaya{color:var(--bahaya)}
+  .jawab .sub{margin-top:5px;font-size:12.5px;color:var(--teks2)}
+
+  .baris{display:flex;justify-content:space-between;gap:12px;align-items:baseline;
+    padding:6px 0;border-top:1px solid var(--garis);font-size:12.5px}
+  .baris:first-child{border-top:0}
+  .baris .kunci{color:var(--teks3);font-size:11.5px;white-space:nowrap}
+  .baris .nilai{font-weight:700;text-align:right}
+  .blok{margin-top:10px;padding-top:4px;border-top:1px solid var(--garis)}
+  .cap{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;
+    padding:2px 7px;border-radius:999px;border:1px solid var(--garis2);color:var(--teks2);
+    background:var(--panel2);white-space:nowrap}
+  .cap svg{width:11px;height:11px;flex:none}
+  .cap.bahaya{color:var(--bahaya);border-color:rgba(208,59,59,.5);background:rgba(208,59,59,.13)}
+  .cap.aman{color:var(--aman);border-color:rgba(12,163,12,.45);background:rgba(12,163,12,.12)}
+  .cap.akan{color:var(--akan);border-color:rgba(250,178,25,.45);background:rgba(250,178,25,.12)}
+
+  /* ---------------- ringkasan nasional ---------------- */
+  .ubin{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .ubin div{background:var(--panel2);border:1px solid var(--garis);border-radius:9px;padding:9px 10px}
+  .ubin .n{font-size:22px;font-weight:800;line-height:1.1;color:var(--teks);font-variant-numeric:tabular-nums}
+  .ubin .l{margin-top:2px;font-size:10.5px;color:var(--teks3);line-height:1.35}
+
+  /* ---------------- kartu gunung ---------------- */
+  .gunung{width:100%;text-align:left;display:block;background:var(--panel2);border:1px solid var(--garis);
+    border-radius:9px;padding:11px 10px;margin-bottom:7px;cursor:pointer}
+  .gunung:hover{border-color:var(--garis2)}
+  .gunung[aria-pressed="true"]{border-color:#9dc3ef;box-shadow:0 0 0 1px #9dc3ef inset}
+  .gunung .atas{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+  .gunung .nm{font-size:14px;font-weight:800}
+  .gunung .jam{font-size:10.5px;color:var(--teks3);white-space:nowrap}
+  .gunung .rinci{margin-top:4px;font-size:11.5px;color:var(--teks2);line-height:1.5}
+  .gunung .rinci b{color:var(--teks)}
+  /* Konfirmasi sekunder: sengaja tenang dan tanpa warna status apa pun, supaya
+     tidak terbaca sebagai peringatan yang berdiri sendiri. */
+  .gunung .sigmet{display:inline-block;margin-top:3px;font-size:10.5px;
+    color:var(--teks3);font-style:italic}
+
+  /* ---------------- tabel & daftar ---------------- */
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--garis);vertical-align:top}
+  thead th{font-size:9.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;
+    color:var(--teks3)}
+  /* Nama wilayah/bandara adalah header baris (th scope="row") demi semantik tabel,
+     tapi harus tampil sebagai teks biasa, bukan seperti header kolom. */
+  tbody th{font-size:12px;font-weight:600;color:var(--teks1);text-transform:none;letter-spacing:0}
+  .kode{font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
+  tbody tr:last-child td{border-bottom:0}
+  /* Di ponsel wadah ini TIDAK menggulir sendiri - halamanlah yang menggulir.
+     Gulir bersarang di layar sentuh membuat orang tidak sengaja menggulir kotak
+     dalam padahal maksudnya menggulir halaman. Batas tinggi dipasang lagi >=900px. */
+  .gulir{margin:0 -3px;padding:0 3px}
+
+  /* Tabel dua kolom untuk kolom samping yang sempit (~330px).
+     Tiga kolom tidak muat: "permukaan - 4.600 m" saja sudah selebar satu kolom,
+     sehingga membungkus dan membuat baris jadi ragged. Kolom kanan dikunci
+     selebar 78px untuk waktu, sisanya milik nama. */
+  table.tbl2{table-layout:fixed}
+  /* nowrap hanya untuk sel data ("Sekarang" / "09:10 WIB"); header kolom seperti
+     "Masuk area abu" harus boleh membungkus, kalau tidak justru header-nya yang
+     meluber keluar tabel. */
+  table.tbl2 thead th:last-child{text-align:right;width:78px;padding-right:2px}
+  table.tbl2 tbody td:last-child{
+    text-align:right;white-space:nowrap;width:78px;padding-right:2px}
+  table.tbl2 tbody th{overflow-wrap:anywhere;text-align:left}
+  table.tbl2 .sub{display:block;font-size:10.5px;line-height:1.4;color:var(--teks3);margin-top:2px}
+  /* Abu yang menyentuh permukaan: ikon + kata "permukaan" yang memang sudah ada
+     di teks ketinggian. Dulu ini lencana terpisah bertuliskan "permukaan" juga,
+     jadi kata itu tampil dua kali dan menambah satu baris di tiap baris tabel. */
+  .pmk{color:var(--bahaya);font-weight:700;display:inline;white-space:nowrap}
+  .pmk svg{width:10px;height:10px;vertical-align:-1px;margin-right:2px}
+
+  details.prov{border-top:1px solid var(--garis)}
+  details.prov:first-of-type{border-top:0}
+  /* flex-wrap membuat jumlahnya turun utuh ke baris sendiri kalau nama provinsinya
+     panjang ("Daerah Khusus Ibukota Jakarta"), bukan ikut membungkus berselang-seling
+     di sebelah nama. */
+  details.prov>summary{cursor:pointer;list-style:none;padding:11px 2px;display:flex;
+    flex-wrap:wrap;gap:2px 8px;align-items:baseline;font-size:12.5px;font-weight:700}
+  details.prov>summary .nm{flex:1 1 auto;min-width:0}
+  details.prov>summary::-webkit-details-marker{display:none}
+  details.prov>summary::before{content:"\25B8";color:var(--teks3);margin-right:7px;font-size:10px;
+    display:inline-block;transition:transform .12s}
+  details.prov[open]>summary::before{transform:rotate(90deg)}
+  /* Nama provinsi panjang ("Daerah Khusus Ibukota Jakarta") harus boleh membungkus
+     tanpa menabrak jumlahnya; karena itu jumlahnya rata kanan dan ikut membungkus. */
+  details.prov>summary .jml{flex:0 0 auto;margin-left:auto;font-size:10.5px;font-weight:600;
+    color:var(--teks3);text-align:right;line-height:1.35;white-space:nowrap}
+  details.prov .isi{padding:0 2px 8px 8px}
+
+  details.mentah>summary{cursor:pointer;font-size:11.5px;color:var(--teks2);padding:14px 0}
+  pre.vaa{margin:6px 0 0;padding:9px;background:var(--dasar);border:1px solid var(--garis);
+    border-radius:8px;font-size:10.5px;line-height:1.5;color:var(--teks2);white-space:pre-wrap;
+    max-height:230px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+  footer{border-top:1px solid var(--garis);font-size:11.5px;
+    color:var(--teks3);line-height:1.65;background:var(--panel);
+    padding:15px calc(16px + env(safe-area-inset-right))
+            calc(26px + env(safe-area-inset-bottom))
+            calc(16px + env(safe-area-inset-left))}
+  footer b{color:var(--teks2)}
+  footer p{margin:0 0 8px;max-width:110ch}
+
+  /* ---------------- peta ---------------- */
+  .leaflet-container{background:#111110;font:inherit}
+  /* tile OSM digelapkan supaya menyatu dengan tema gelap */
+  .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.86) saturate(.4)}
+  .leaflet-bar a,.leaflet-bar a:hover{background:var(--panel);color:var(--teks);border-color:var(--garis)}
+  .leaflet-bar a,.leaflet-touch .leaflet-bar a{width:40px;height:40px;line-height:40px;
+    font-size:20px}
+  .leaflet-control-attribution{background:rgba(26,26,25,.82)!important;color:var(--teks3)!important;
+    font-size:10px}
+  .leaflet-control-attribution a{color:var(--teks2)!important}
+  .leaflet-tooltip{background:#2c2c29;border:1px solid var(--garis2);color:var(--teks);
+    box-shadow:0 6px 18px rgba(0,0,0,.5);font-size:12px;line-height:1.45}
+  .leaflet-tooltip-top:before{border-top-color:var(--garis2)}
+  .leaflet-tooltip-bottom:before{border-bottom-color:var(--garis2)}
+  .leaflet-tooltip-left:before{border-left-color:var(--garis2)}
+  .leaflet-tooltip-right:before{border-right-color:var(--garis2)}
+  .tip b{display:block;font-size:12.5px}
+  .tip i{font-style:normal;color:var(--teks3)}
+
+  .kotak-peta{background:rgba(26,26,25,.93);border:1px solid var(--garis2);border-radius:10px;
+    box-shadow:0 8px 22px rgba(0,0,0,.5);color:var(--teks2)}
+  .legenda{padding:9px 11px;font-size:11px;line-height:1.85}
+  .legenda>summary{list-style:none;cursor:pointer;font-size:9.5px;font-weight:800;
+    letter-spacing:.6px;text-transform:uppercase;color:var(--teks3);
+    padding:12px 4px;margin:-10px -4px}
+  .legenda>summary::-webkit-details-marker{display:none}
+  .legenda[open]>summary{margin-bottom:3px}
+  .legenda .brs{display:flex;align-items:center;gap:7px}
+  .legenda .kotak{width:13px;height:11px;border-radius:2px;border:1.5px solid var(--abu);
+    background:rgba(208,59,59,.35);flex:none}
+  .legenda svg{width:13px;height:13px;flex:none}
+  .legenda .kepala{font-size:9.5px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;
+    color:var(--teks3);margin-bottom:3px}
+
+  /* Di ponsel kontrol linimasa membentang selebar peta supaya keempat langkahnya
+     tetap terbaca dan cukup besar untuk jari; wadah bottom-left Leaflet dilebarkan
+     dan diberi jarak bawah agar tidak menimpa baris atribusi OSM. */
+  .leaflet-bottom.leaflet-left{width:100%;right:0}
+  /* Leaflet memberi .leaflet-control float:left + margin sendiri yang lebih
+     spesifik, sehingga kontrolnya menyusut ke lebar isi dan margin di .linimasa
+     terabaikan. Dua-duanya harus dibatalkan di sini. */
+  .leaflet-bottom.leaflet-left .leaflet-control{float:none;clear:none;
+    margin:0 8px 20px!important}
+  .linimasa{padding:7px;display:flex;gap:7px;align-items:center}
+  .segmen{flex:1 1 auto;min-width:0}
+  .segmen{display:flex;gap:3px;background:var(--panel2);border:1px solid var(--garis);
+    border-radius:9px;padding:3px}
+  .segmen button{flex:1 1 0;min-width:0;border:0;background:transparent;color:var(--teks2);
+    font-size:11.5px;font-weight:700;padding:9px 4px;border-radius:7px;cursor:pointer;
+    white-space:nowrap;line-height:1.2}
+  .segmen button .jm{display:block;font-size:9.5px;font-weight:600;color:var(--teks3);margin-top:2px}
+  .segmen button:hover{background:#3a3a35}
+  .segmen button[aria-pressed="true"]{background:#4a4a43;color:var(--teks)}
+  .segmen button[aria-pressed="true"] .jm{color:var(--teks2)}
+  .putar{border:1px solid var(--garis2);background:var(--panel2);color:var(--teks);border-radius:9px;
+    width:44px;height:44px;display:inline-flex;align-items:center;justify-content:center;
+    cursor:pointer;flex:none}
+  .putar:hover{background:#3a3a35}
+  .putar svg{width:15px;height:15px}
+  @media (max-width:359px){
+    .segmen button{font-size:10.5px;padding:9px 2px}
+    .segmen button .jm{font-size:9px}
+  }
+  /* =======================================================================
+     >= 900px: dua kolom. Pemilih lokasi + jawaban dipatok di atas kolom kiri,
+     rinciannya menggulir di bawahnya, peta mengisi kolom kanan setinggi layar.
+     Tinggi diambil dari body yang flex-column, bukan calc(100vh - 58px), supaya
+     tidak bergantung pada tinggi header yang bisa berubah.
+     ======================================================================= */
+  @media (min-width:900px){
+    h1{font-size:16px}
+    h1 small{display:block}
+    header{flex-direction:row;flex-wrap:wrap;gap:12px 18px;align-items:center;
+      justify-content:space-between;padding:11px 16px}
+    .kepala-kanan{justify-content:flex-end}
+    #jamPembaruan{text-align:right}
+
+    /* Tinggi dikunci ke layar supaya kolom kiri menggulir sendiri dan peta tetap
+       setinggi jendela. --tinggi-header diisi JS dari tinggi header yang sebenarnya,
+       jadi tidak ada angka ajaib yang meleset kalau judulnya membungkus. */
+    .kerangka{display:grid;flex:0 0 auto;min-height:520px;
+      height:calc(100dvh - var(--tinggi-header, 58px));
+      grid-template-columns:390px minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+    .panel-atas{grid-column:1;grid-row:1;padding:14px 14px 0;border-right:1px solid var(--garis)}
+    aside{grid-column:1;grid-row:2;min-height:0;overflow-y:auto;
+      padding:0 14px 14px;border-right:1px solid var(--garis)}
+    main{grid-column:2;grid-row:1 / span 2;height:auto;max-height:none;min-height:0}
+
+    .tombol{min-height:0;padding:9px 12px;font-size:13px}
+    .cari input{min-height:0;padding:9px 11px;font-size:13px}
+    .saran li{padding:7px 9px;font-size:13px}
+    .gulir{max-height:340px;overflow-y:auto}
+    details.prov>summary{padding:7px 2px}
+    .gunung{padding:9px 10px}
+
+    /* kontrol peta kembali jadi kotak mengambang di pojok */
+    .leaflet-bottom.leaflet-left{width:auto;right:auto}
+    .leaflet-bottom.leaflet-left .leaflet-control{float:left;margin:0 0 10px 10px!important}
+    .leaflet-bar a,.leaflet-touch .leaflet-bar a{width:26px;height:26px;line-height:26px;
+      font-size:18px}
+    .legenda>summary{padding:2px 0;margin:0}
+    details.mentah>summary{padding:5px 0}
+    .linimasa{padding:8px;gap:8px}
+    .segmen{flex:0 0 auto}
+    .segmen button{flex:0 0 auto;padding:6px 10px}
+    .putar{width:38px;height:38px}
+  }
+
+  /* hanya untuk pembaca layar */
+  .tersembunyi{position:absolute!important;width:1px;height:1px;overflow:hidden;
+    clip:rect(0 0 0 0);white-space:nowrap}
+  .lewati{position:absolute;left:-9999px}
+  .lewati:focus{left:8px;top:8px;z-index:2000;background:var(--panel);padding:8px 12px;
+    border-radius:8px;border:1px solid var(--garis2)}
+</style>
+</head>
+<body>
+
+<a class="lewati" href="#daftarWilayah">Lewati ke tabel wilayah terdampak</a>
+
+<header>
+  <h1>Pantau Abu Vulkanik Indonesia
+    <small>VA Advisory VAAC Darwin &middot; 38 provinsi &middot; 508 kab/kota &middot; 244 bandara</small></h1>
+  <div class="kepala-kanan">
+    <div id="lencanaNasional" class="lencana" role="status" aria-live="polite">Memuat data&hellip;</div>
+    <div id="jamPembaruan">&nbsp;</div>
+  </div>
+</header>
+
+<div class="kerangka">
+  <div class="panel-atas">
+    <!-- (a) PILIH LOKASI -->
+    <section class="kartu">
+      <h2 class="judul">Pilih lokasi</h2>
+      <button id="tombolGps" class="tombol" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3"></path>
+          <circle cx="12" cy="12" r="8"></circle></svg>
+        Gunakan lokasi saya
+      </button>
+      <div class="cari">
+        <label class="ket redup" for="kotakCari" style="display:block;margin:9px 0 4px;font-size:11.5px">
+          atau cari kabupaten/kota</label>
+        <input id="kotakCari" type="text" autocomplete="off" spellcheck="false"
+               placeholder="Ketik nama kabupaten atau kota&hellip;"
+               role="combobox" aria-expanded="false" aria-autocomplete="list"
+               aria-controls="daftarSaran" aria-label="Cari kabupaten atau kota">
+        <ul id="daftarSaran" class="saran" role="listbox" aria-label="Hasil pencarian" hidden></ul>
+      </div>
+      <p id="pesanLokasi" class="ket redup" style="margin:8px 0 0" role="status" aria-live="polite"></p>
+    </section>
+
+    <!-- (b) STATUS LOKASI -->
+    <section class="kartu" id="kartuLokasi" aria-labelledby="judulLokasi">
+      <h2 class="judul" id="judulLokasi">Apakah abu sampai ke tempat saya?
+        <span class="sisip" id="namaLokasi"></span></h2>
+      <div id="isiLokasi">
+        <p class="ket redup" style="margin:0">Pilih lokasi di atas untuk melihat jawabannya.</p>
+      </div>
+    </section>
+
+  </div>
+
+  <main>
+    <div id="peta" role="application" aria-label="Peta sebaran abu vulkanik Indonesia"></div>
+  </main>
+
+  <aside>
+    <!-- (c) RINGKASAN NASIONAL -->
+    <section class="kartu" aria-labelledby="judulRingkas">
+      <h2 class="judul" id="judulRingkas">Ringkasan nasional</h2>
+      <div class="ubin" id="ubinRingkas">
+        <div><div class="n">&mdash;</div><div class="l">Gunung dengan advisory aktif</div></div>
+        <div><div class="n">&mdash;</div><div class="l">Kabupaten/kota terdampak</div></div>
+        <div><div class="n">&mdash;</div><div class="l">Provinsi terdampak</div></div>
+        <div><div class="n">&mdash;</div><div class="l">Bandara terdampak</div></div>
+      </div>
+      <p id="catatanPermukaan" class="ket" style="margin:9px 0 0" hidden></p>
+    </section>
+
+    <!-- (d) GUNUNG AKTIF -->
+    <section class="kartu" aria-labelledby="judulGunung">
+      <h2 class="judul" id="judulGunung">Gunung aktif
+        <span class="sisip">klik untuk fokus peta</span></h2>
+      <div id="daftarGunung"><p class="ket redup" style="margin:0">Memuat&hellip;</p></div>
+    </section>
+
+    <!-- (e) WILAYAH TERDAMPAK -->
+    <section class="kartu" aria-labelledby="judulWilayah" id="daftarWilayah">
+      <h2 class="judul" id="judulWilayah">Wilayah terdampak
+        <span class="sisip" id="sisipWilayah"></span></h2>
+      <div class="gulir" id="isiWilayah"><p class="ket redup" style="margin:0">Memuat&hellip;</p></div>
+    </section>
+
+    <!-- (f) BANDARA TERDAMPAK -->
+    <section class="kartu" aria-labelledby="judulBandara">
+      <h2 class="judul" id="judulBandara">Bandara terdampak
+        <span class="sisip" id="sisipBandara"></span></h2>
+      <div class="gulir" id="isiBandara"><p class="ket redup" style="margin:0">Memuat&hellip;</p></div>
+    </section>
+
+    <!-- (g) TENTANG -->
+    <section class="kartu" aria-labelledby="judulTentang" id="tentang">
+      <h2 class="judul" id="judulTentang">Tentang</h2>
+      <p class="ket" style="margin:0 0 10px">
+        Memetakan sebaran abu vulkanik terhadap seluruh Indonesia &mdash; 38 provinsi,
+        508 kabupaten/kota dan 244 bandara &mdash; sekarang dan dalam prakiraan 18 jam
+        ke depan.
+      </p>
+
+      <div class="baris"><span class="kunci">Kode sumber</span>
+        <span class="nilai" id="tentangRepo">&mdash;</span></div>
+      <div class="baris"><span class="kunci">Dibuat oleh</span>
+        <span class="nilai">Kusuma I.&nbsp;Putra</span></div>
+
+      <div class="blok">
+        <p class="ket redup" style="margin:0 0 8px;font-size:11px">
+          <b>Sumber data.</b> Poligon, ketinggian (<i>flight level</i>) dan prakiraan
+          +6/+12/+18&nbsp;jam diambil apa adanya dari teks VA ADVISORY <b>VAAC Darwin</b>,
+          Bureau of Meteorology (BOM) Australia; deteksinya berasal dari satelit
+          Himawari&#8209;9. Advisory terbit sekitar tiap 6 jam, jadi halaman ini hanya
+          sebaru advisory terakhir. Status gunung api: <b>PVMBG/MAGMA Indonesia</b> &mdash;
+          Badan Geologi, ESDM. Batas wilayah, koordinat kabupaten/kota dan bandara:
+          <b>OpenStreetMap</b> (ODbL).
+        </p>
+        <p class="ket redup" style="margin:0 0 8px;font-size:11px">
+          Baris <i>&ldquo;BMKG juga menerbitkan SIGMET&rdquo;</i> pada kartu gunung adalah
+          konfirmasi dari otoritas Indonesia, diambil dari sistem Ina-SIAM BMKG. Itu
+          <b>penguat, bukan penentu</b> &mdash; tidak satu pun poligon, jarak, atau status di
+          halaman ini berasal darinya. Alamat feed yang bisa diakses publik berada di domain
+          pihak ketiga (bukan <code>bmkg.go.id</code>), meski ditautkan oleh halaman peta
+          abu vulkanik BMKG sendiri.
+        </p>
+        <p class="ket redup" style="margin:0 0 8px;font-size:11px">
+          Poligon VAAC menandai <b>ruang udara</b> yang terkontaminasi abu, bukan prakiraan
+          hujan abu di permukaan; hanya kalau dasar lapisannya &ldquo;permukaan&rdquo; (SFC)
+          abu berpotensi turun sampai ke tanah. Waktu ditampilkan dalam WIB, WITA atau WIT
+          mengikuti provinsi wilayahnya. Halaman ini bukan produk resmi BMKG, PVMBG maupun
+          BOM &mdash; untuk keputusan penerbangan atau kebencanaan, gunakan sumber resmi.
+        </p>
+      </div>
+      <div id="daftarMentah"><p class="ket redup" style="margin:0">Memuat&hellip;</p></div>
+    </section>
+  </aside>
+</div>
+
+<footer>
+  <p>Data: VAAC Darwin (BOM Australia) &middot; PVMBG/MAGMA Indonesia &middot; BMKG Ina-SIAM
+  &middot; OpenStreetMap (ODbL). Bukan produk resmi &mdash; rinciannya di
+  <a href="#tentang">Tentang</a>.</p>
+</footer>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+"use strict";
+
+/* =====================================================================
+   Pantau Abu Vulkanik Indonesia - frontend satu berkas.
+   Diprogram terhadap kontrak API: /api/wilayah, /api/nasional,
+   /api/lokasi, /api/gunung/{kode}.
+   ===================================================================== */
+
+const LANGKAH = [
+  { kunci: "obs", label: "Sekarang" },
+  { kunci: "f6",  label: "+6 jam"   },
+  { kunci: "f12", label: "+12 jam"  },
+  { kunci: "f18", label: "+18 jam"  }
+];
+
+// Alamat repositori, ditampilkan di panel Tentang. Kosongkan kalau belum ada:
+// barisnya akan hilang sendiri, bukan menampilkan tautan yang rusak.
+const REPO_URL = "https://github.com/kusumaindraputra/monitoring-abu";
+const WARNA_ABU = "#d03b3b";      // satu warna untuk semua gunung
+const SEGAR_MS  = 5 * 60 * 1000;  // tarik ulang data tiap 5 menit
+const JAM_MS    = 30 * 1000;      // segarkan teks umur data tiap 30 detik
+const PUTAR_MS  = 1800;           // jeda antar langkah saat tombol play menyala
+
+/* ---------- keadaan halaman ---------- */
+const st = {
+  wilayah: null,        // {provinsi, kabkota, bandara}
+  nasional: null,       // hasil /api/nasional
+  lokasi: null,         // hasil /api/lokasi
+  langkah: "obs",       // langkah waktu yang sedang digambar di peta
+  fokus: null,          // kode gunung yang sedang difokuskan, atau null
+  memutar: false,
+  jamPutar: null,
+  sorotSaran: -1,
+  saranTampil: []
+};
+
+/* ---------- pembantu kecil ---------- */
+const el = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+const angka = (n) => (n == null ? "—" : Number(n).toLocaleString("id-ID"));
+
+function jarakRingkas(km) {
+  if (km == null) return "—";
+  return (km >= 100 ? Math.round(km) : Math.round(km * 10) / 10).toLocaleString("id-ID") + " km";
+}
+
+/* ---------- waktu: server mengirim ISO UTC, kita tampilkan waktu setempat ----
+   Indonesia punya tiga zona waktu dan aplikasi ini nasional, jadi menampilkan
+   semuanya sebagai WIB keliru untuk separuh negeri - Dukono dan Ibu, dua gunung
+   yang paling sering beradvisory, ada di Maluku Utara yang WIT (selisih 2 jam).
+   Pemetaannya mengikuti batas provinsi resmi, bukan garis bujur. */
+const ZONA_WITA = new Set(["Kalimantan Selatan","Kalimantan Timur","Kalimantan Utara",
+  "Bali","Nusa Tenggara Barat","Nusa Tenggara Timur","Sulawesi Utara","Sulawesi Tengah",
+  "Sulawesi Selatan","Sulawesi Tenggara","Gorontalo","Sulawesi Barat"]);
+const ZONA_WIT = new Set(["Maluku","Maluku Utara","Papua","Papua Barat","Papua Barat Daya",
+  "Papua Pegunungan","Papua Selatan","Papua Tengah"]);
+
+/** Provinsi -> zona waktu tampilan. Tanpa provinsi, jatuh ke WIB. */
+function zonaProvinsi(provinsi) {
+  if (ZONA_WIT.has(provinsi))  return { tz: "Asia/Jayapura", label: "WIT" };
+  if (ZONA_WITA.has(provinsi)) return { tz: "Asia/Makassar", label: "WITA" };
+  return { tz: "Asia/Jakarta", label: "WIB" };
+}
+
+/** Zona yang sedang berlaku: ikut lokasi yang dipilih pengguna, kalau ada. */
+function zonaAktif() {
+  const l = st.lokasi && st.lokasi.lokasi;
+  return zonaProvinsi(l && l.provinsi);
+}
+
+function waktuLokal(iso, denganTanggal, zona) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d)) return "—";
+  const z = zona || zonaAktif();
+  const opsi = { timeZone: z.tz, hour: "2-digit", minute: "2-digit", hour12: false };
+  if (denganTanggal) { opsi.day = "2-digit"; opsi.month = "short"; }
+  return d.toLocaleString("id-ID", opsi).replace(/\./g, ":").replace(/:(\s)/g, "$1") + " " + z.label;
+}
+
+function umurTeks(iso) {
+  if (!iso) return "";
+  const menit = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (isNaN(menit)) return "";
+  if (menit < 0) return "baru saja";
+  if (menit < 1) return "baru saja";
+  if (menit < 60) return menit + " menit lalu";
+  const jam = Math.floor(menit / 60);
+  if (jam < 24) return jam + " jam" + (menit % 60 ? " " + (menit % 60) + " menit" : "") + " lalu";
+  const hari = Math.floor(jam / 24);
+  return hari + " hari lalu";
+}
+
+function menujuTeks(iso) {
+  if (!iso) return "";
+  const menit = Math.round((new Date(iso).getTime() - Date.now()) / 60000);
+  if (isNaN(menit)) return "";
+  if (menit <= 0) return "seharusnya sudah terbit";
+  if (menit < 60) return "sekitar " + menit + " menit lagi";
+  const jam = Math.floor(menit / 60);
+  return "sekitar " + jam + " jam" + (menit % 60 ? " " + (menit % 60) + " menit" : "") + " lagi";
+}
+
+/* ---------- arah mata angin dalam Bahasa Indonesia ---------- */
+const ARAH = {
+  N: "utara", NNE: "utara-timur laut", NE: "timur laut", ENE: "timur-timur laut",
+  E: "timur", ESE: "timur-tenggara", SE: "tenggara", SSE: "selatan-tenggara",
+  S: "selatan", SSW: "selatan-barat daya", SW: "barat daya", WSW: "barat-barat daya",
+  W: "barat", WNW: "barat-barat laut", NW: "barat laut", NNW: "utara-barat laut"
+};
+const arahKata = (kode) => (kode ? (ARAH[kode] || kode) : null);
+
+/* =====================================================================
+   Ikon status: SETIAP indikator berwarna wajib disertai ikon + teks.
+   Warna hijau (#0ca30c) dan merah (#d03b3b) hanya berjarak deutan
+   Delta-E 4.1, jadi warna saja tidak pernah cukup.
+   ===================================================================== */
+function ikon(jenis, ukuran) {
+  const s = ukuran || 16;
+  const buka = '<svg viewBox="0 0 24 24" width="' + s + '" height="' + s + '" fill="none" ' +
+    'stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" ' +
+    'aria-hidden="true" focusable="false">';
+  if (jenis === "aman") {
+    return buka + '<circle cx="12" cy="12" r="9"></circle><path d="M8 12.4l2.6 2.6L16 9.6"></path></svg>';
+  }
+  if (jenis === "akan") {
+    return buka + '<circle cx="12" cy="12" r="9"></circle><path d="M12 7.2v5.2l3.2 2"></path></svg>';
+  }
+  if (jenis === "bahaya") {
+    return buka + '<path d="M12 3.4L21.2 20H2.8L12 3.4z"></path>' +
+      '<path d="M12 9.6v4.4"></path><path d="M12 17.2h.01"></path></svg>';
+  }
+  if (jenis === "gunung") {
+    return buka + '<path d="M3 19h18L14 6l-3.2 5.6L8.8 9 3 19z"></path></svg>';
+  }
+  if (jenis === "titik") {
+    return buka + '<path d="M12 21s7-6.2 7-11a7 7 0 10-14 0c0 4.8 7 11 7 11z"></path>' +
+      '<circle cx="12" cy="10" r="2.4"></circle></svg>';
+  }
+  if (jenis === "putar") {
+    return '<svg viewBox="0 0 24 24" width="' + s + '" height="' + s + '" fill="currentColor" ' +
+      'aria-hidden="true" focusable="false"><path d="M7 4.5l12 7.5-12 7.5z"></path></svg>';
+  }
+  if (jenis === "jeda") {
+    return '<svg viewBox="0 0 24 24" width="' + s + '" height="' + s + '" fill="currentColor" ' +
+      'aria-hidden="true" focusable="false"><rect x="6" y="4.5" width="4" height="15" rx="1"></rect>' +
+      '<rect x="14" y="4.5" width="4" height="15" rx="1"></rect></svg>';
+  }
+  return buka + "</svg>";
+}
+
+/** Lencana/keping status: ikon + teks + warna, tidak pernah warna saja. */
+/* Ketinggian abu untuk baris tabel yang sempit.
+   Kalau lapisannya menyentuh permukaan, teks ketinggian memang sudah diawali kata
+   "permukaan" - jadi cukup diberi ikon dan diwarnai, tidak perlu lencana terpisah
+   yang mengulang kata yang sama. Ikon + kata + warna tetap terpenuhi. */
+function tinggiRingkas(x) {
+  const teks = esc(x.ketinggian_ringkas || "—");
+  return x.sampai_permukaan
+    ? '<span class="pmk">' + ikon("bahaya", 10) + teks + "</span>"
+    : teks;
+}
+
+function keping(jenis, teks, kelasTambahan) {
+  return '<span class="cap ' + jenis + (kelasTambahan ? " " + kelasTambahan : "") + '">' +
+    ikon(jenis, 11) + esc(teks) + "</span>";
+}
+
+/* =====================================================================
+   Pengambilan data
+   ===================================================================== */
+async function ambil(url) {
+  const r = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!r.ok) {
+    let pesan = "HTTP " + r.status;
+    try {
+      const j = await r.json();
+      if (j && j.detail) pesan = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+    } catch (e) { /* biarkan pesan bawaan */ }
+    const err = new Error(pesan);
+    err.status = r.status;
+    throw err;
+  }
+  return r.json();
+}
+
+/* =====================================================================
+   Peta
+   ===================================================================== */
+let peta, lapisAbu, lapisGunung, penandaLokasi = null, kontrolLinimasa;
+
+function siapkanPeta() {
+  peta = L.map("peta", { zoomControl: true, attributionControl: true })
+    .setView([-2.5, 118], 5);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 18,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> (ODbL)'
+  }).addTo(peta);
+
+  lapisAbu = L.layerGroup().addTo(peta);
+  lapisGunung = L.layerGroup().addTo(peta);
+
+  // Legenda. Di layar lebar: kotak terbuka di pojok kanan bawah.
+  // Di ponsel: pindah ke kanan ATAS dan tertutup, karena pojok kanan bawah sudah
+  // dipakai atribusi OSM dan linimasa yang membentang selebar peta.
+  const lebar = window.matchMedia("(min-width:900px)").matches;
+  const legenda = L.control({ position: lebar ? "bottomright" : "topright" });
+  legenda.onAdd = function () {
+    const d = L.DomUtil.create("details", "kotak-peta legenda");
+    if (lebar) d.open = true;
+    d.innerHTML =
+      "<summary>Legenda</summary>" +
+      '<div class="brs"><span class="kotak"></span>Area abu (langkah terpilih)</div>' +
+      '<div class="brs" style="color:' + WARNA_ABU + '">' + ikon("gunung", 13) + "Gunung sumber abu</div>" +
+      '<div class="brs" style="color:var(--lokasi)">' + ikon("titik", 13) + "Lokasi Anda</div>";
+    L.DomEvent.disableClickPropagation(d);
+    return d;
+  };
+  legenda.addTo(peta);
+
+  // Kontrol linimasa (pojok kiri bawah) - linimasa adalah FILTER, bukan warna
+  kontrolLinimasa = L.control({ position: "bottomleft" });
+  kontrolLinimasa.onAdd = function () {
+    const d = L.DomUtil.create("div", "kotak-peta linimasa");
+    d.id = "kotakLinimasa";
+    d.setAttribute("role", "group");
+    d.setAttribute("aria-label", "Langkah waktu sebaran abu");
+    L.DomEvent.disableClickPropagation(d);
+    L.DomEvent.disableScrollPropagation(d);
+    return d;
+  };
+  kontrolLinimasa.addTo(peta);
+  gambarLinimasa();
+}
+
+/** Ambil semua lapisan satu gunung pada satu langkah waktu. */
+function lapisanLangkah(g, kunci) {
+  const t = (g.linimasa || []).find((x) => x.kunci === kunci);
+  return t ? (t.lapisan || []) : [];
+}
+function berlakuLangkah(g, kunci) {
+  const t = (g.linimasa || []).find((x) => x.kunci === kunci);
+  return t ? t.berlaku : null;
+}
+
+function gambarPeta(pasKan) {
+  if (!peta) return;
+  lapisAbu.clearLayers();
+  lapisGunung.clearLayers();
+
+  const gunung = (st.nasional && st.nasional.gunung) || [];
+  const tampil = st.fokus ? gunung.filter((g) => g.kode === st.fokus) : gunung;
+  const semuaTitik = [];
+
+  tampil.forEach((g) => {
+    lapisanLangkah(g, st.langkah).forEach((lap) => {
+      if (!lap.titik || lap.titik.length < 3) return;
+      const arah = arahKata(lap.arah);
+      const isiTip =
+        '<span class="tip"><b>' + esc(g.nama) + "</b>" +
+        "Abu " + esc(lap.ketinggian ? lap.ketinggian.ringkas : lap.fl_label) +
+        (lap.ketinggian && lap.ketinggian.sampai_permukaan ? " (sampai permukaan)" : "") +
+        "<br><i>" + esc(labelLangkah(st.langkah)) +
+        (arah ? " · bergerak ke " + esc(arah) +
+          (lap.kecepatan_kt ? " " + lap.kecepatan_kt + " kt" : "") : "") +
+        "</i></span>";
+      L.polygon(lap.titik, {
+        color: WARNA_ABU, weight: 1.6, opacity: 0.95,
+        fillColor: WARNA_ABU, fillOpacity: st.langkah === "obs" ? 0.3 : 0.17,
+        dashArray: st.langkah === "obs" ? null : "5 4"
+      }).bindTooltip(isiTip, { sticky: true }).addTo(lapisAbu);
+      lap.titik.forEach((p) => semuaTitik.push(p));
+    });
+  });
+
+  // marker gunung - identitas gunung dibawa oleh label & marker, bukan warna
+  gunung.forEach((g) => {
+    if (g.lat == null || g.lon == null) return;
+    const redup = st.fokus && g.kode !== st.fokus;
+    const m = L.marker([g.lat, g.lon], {
+      icon: L.divIcon({
+        className: "",
+        html: '<div style="display:flex;flex-direction:column;align-items:center;' +
+          "transform:translate(-50%,-100%);opacity:" + (redup ? 0.4 : 1) + '">' +
+          '<span style="color:' + WARNA_ABU + ";filter:drop-shadow(0 0 3px #000)\">" +
+          ikon("gunung", 20) + "</span>" +
+          '<span style="margin-top:1px;font:700 11px/1.2 ui-sans-serif,system-ui,sans-serif;' +
+          "color:#fff;background:rgba(26,26,25,.85);border:1px solid #4a4a42;border-radius:5px;" +
+          'padding:1px 5px;white-space:nowrap">' + esc(g.nama) + "</span></div>",
+        iconSize: [0, 0], iconAnchor: [0, 0]
+      }),
+      keyboard: true,          // marker bisa dicapai dengan keyboard
+      title: g.nama
+    });
+    m.bindTooltip(
+      '<span class="tip"><b>' + esc(g.nama) + "</b>" +
+      "Advisory " + esc(g.advisory_nr || "—") + " · terbit " + waktuLokal(g.terbit, true) +
+      "<br><i>" + angka(g.dampak ? g.dampak.kabkota : 0) + " kab/kota · " +
+      angka(g.dampak ? g.dampak.bandara : 0) + " bandara terdampak</i></span>",
+      { direction: "top", offset: [0, -34] }
+    );
+    m.on("click", () => aturFokus(g.kode));
+    m.addTo(lapisGunung);
+    if (!st.fokus || g.kode === st.fokus) semuaTitik.push([g.lat, g.lon]);
+  });
+
+  gambarPenandaLokasi();
+
+  if (pasKan) {
+    const l = st.lokasi && st.lokasi.lokasi;
+    if (l && !st.fokus) semuaTitik.push([l.lat, l.lon]);
+    if (semuaTitik.length) {
+      peta.fitBounds(L.latLngBounds(semuaTitik).pad(0.18), { maxZoom: 9 });
+    } else {
+      peta.setView([-2.5, 118], 5);
+    }
+  }
+}
+
+function gambarPenandaLokasi() {
+  if (penandaLokasi) { peta.removeLayer(penandaLokasi); penandaLokasi = null; }
+  const d = st.lokasi;
+  if (!d || !d.lokasi) return;
+  const l = d.lokasi;
+  const status = d.status || "aman";
+  const teks = status === "terdampak" ? "Ada abu di atas lokasi ini"
+    : status === "akan_terdampak" ? "Diprakirakan masuk area abu"
+      : "Di luar area abu";
+  penandaLokasi = L.circleMarker([l.lat, l.lon], {
+    radius: 8, color: "#ffffff", weight: 2.5,
+    fillColor: "#5aa9e6", fillOpacity: 1
+  }).bindTooltip(
+    '<span class="tip"><b>' + esc(l.nama) + "</b>" +
+    (l.provinsi ? esc(l.provinsi) + "<br>" : "") +
+    "<i>" + esc(teks) + "</i></span>", { direction: "top", offset: [0, -6] }
+  ).addTo(peta);
+}
+
+function aturFokus(kode) {
+  const dariDaftar = el("daftarGunung").contains(document.activeElement);
+  st.fokus = st.fokus === kode ? null : kode;
+  gambarDaftarGunung(true);
+  gambarPeta(true);
+  // kembalikan fokus keyboard ke kartu yang barusan ditekan
+  if (dariDaftar) {
+    const tombol = el("daftarGunung").querySelector('[data-kode="' + kode + '"]');
+    if (tombol) tombol.focus();
+  }
+}
+
+/* =====================================================================
+   Kontrol linimasa (overlay peta)
+   ===================================================================== */
+function labelLangkah(kunci) {
+  const l = LANGKAH.find((x) => x.kunci === kunci);
+  return l ? l.label : kunci;
+}
+
+/** Jam berlaku satu langkah, diambil dari gunung mana pun yang punya. */
+function jamLangkah(kunci) {
+  const gunung = (st.nasional && st.nasional.gunung) || [];
+  for (const g of gunung) {
+    const b = berlakuLangkah(g, kunci);
+    if (b) return waktuLokal(b).replace(/ (WIB|WITA|WIT)$/, "");
+  }
+  return "";
+}
+
+function gambarLinimasa() {
+  const kotak = el("kotakLinimasa");
+  if (!kotak) return;
+  const segmen = LANGKAH.map((l) => {
+    const jam = jamLangkah(l.kunci);
+    return '<button type="button" data-kunci="' + l.kunci + '" ' +
+      'aria-pressed="' + (st.langkah === l.kunci ? "true" : "false") + '">' +
+      esc(l.label) + (jam ? '<span class="jm">' + esc(jam) + "</span>" : "") + "</button>";
+  }).join("");
+  kotak.innerHTML =
+    '<div class="segmen" role="group" aria-label="Pilih langkah waktu">' + segmen + "</div>" +
+    '<button type="button" class="putar" id="tombolPutar" ' +
+    'aria-pressed="' + (st.memutar ? "true" : "false") + '" ' +
+    'aria-label="' + (st.memutar ? "Hentikan pemutaran linimasa" : "Putar linimasa otomatis") + '">' +
+    ikon(st.memutar ? "jeda" : "putar", 15) + "</button>";
+
+  kotak.querySelectorAll(".segmen button").forEach((b) => {
+    b.addEventListener("click", () => {
+      hentikanPutar();
+      pilihLangkah(b.dataset.kunci);
+    });
+  });
+  const tp = el("tombolPutar");
+  if (tp) tp.addEventListener("click", togglePutar);
+}
+
+function pilihLangkah(kunci) {
+  st.langkah = kunci;
+  gambarLinimasa();
+  gambarPeta(false);
+}
+
+function togglePutar() {
+  if (st.memutar) { hentikanPutar(); return; }
+  st.memutar = true;
+  st.jamPutar = setInterval(() => {
+    const i = LANGKAH.findIndex((l) => l.kunci === st.langkah);
+    st.langkah = LANGKAH[(i + 1) % LANGKAH.length].kunci;
+    gambarLinimasa();
+    gambarPeta(false);
+  }, PUTAR_MS);
+  gambarLinimasa();
+}
+
+function hentikanPutar() {
+  if (st.jamPutar) clearInterval(st.jamPutar);
+  st.jamPutar = null;
+  st.memutar = false;
+  gambarLinimasa();
+}
+
+/* =====================================================================
+   Header: status nasional + jam pembaruan
+   ===================================================================== */
+function statusNasional() {
+  const d = st.nasional;
+  if (!d) return { jenis: "aman", teks: "Memuat data…" };
+  const r = d.ringkasan || {};
+  const kab = (d.terdampak && d.terdampak.kabkota) || [];
+  if (!r.gunung_aktif) {
+    return { jenis: "aman", teks: "Aman — tidak ada advisory abu aktif" };
+  }
+  const sekarang = kab.filter((k) => k.kunci_pertama === "obs").length;
+  if (sekarang > 0) {
+    return { jenis: "bahaya", teks: "Ada abu · " + angka(sekarang) + " kab/kota tertutup abu sekarang" };
+  }
+  if (kab.length > 0) {
+    return { jenis: "akan", teks: "Akan terdampak · " + angka(kab.length) + " kab/kota dalam 18 jam" };
+  }
+  return {
+    jenis: "aman",
+    teks: "Aman · " + angka(r.gunung_aktif) + " advisory aktif, tidak ada wilayah terdampak"
+  };
+}
+
+function gambarLencana() {
+  const s = statusNasional();
+  const n = el("lencanaNasional");
+  n.className = "lencana " + s.jenis;
+  n.innerHTML = ikon(s.jenis, 15) + "<span>" + esc(s.teks) + "</span>";
+}
+
+function gambarJam() {
+  const p = (st.nasional && st.nasional.pembaruan) || null;
+  const n = el("jamPembaruan");
+  if (!p) { n.innerHTML = "&nbsp;"; return; }
+  const bar = [];
+  if (p.terbit_terbaru) {
+    bar.push("Advisory terbaru <b>" + esc(waktuLokal(p.terbit_terbaru, true)) + "</b> · " +
+      esc(umurTeks(p.terbit_terbaru)));
+  }
+  const brs2 = [];
+  if (p.berikutnya_terdekat) {
+    brs2.push("Berikutnya " + esc(waktuLokal(p.berikutnya_terdekat, true)) +
+      " (" + esc(menujuTeks(p.berikutnya_terdekat)) + ")");
+  }
+  if (p.vaac_ditarik) brs2.push("data ditarik " + esc(umurTeks(p.vaac_ditarik)));
+  if (brs2.length) bar.push(brs2.join(" · "));
+  n.innerHTML = bar.length ? bar.join("<br>") : "&nbsp;";
+  // Isi header (lencana + baris jam) mengubah tingginya, dan tinggi itu dipakai
+  // CSS desktop untuk mengunci tinggi kerangka. Ukur ulang setiap kali digambar.
+  if (typeof ukurHeader === "function") ukurHeader();
+}
+
+/** Dipanggil tiap 30 detik: hanya menyegarkan teks umur, tanpa menarik data. */
+function segarkanUmur() {
+  gambarJam();
+  gambarDaftarGunung();
+}
+
+/* =====================================================================
+   (b) Status lokasi
+   ===================================================================== */
+function urutanLangkah(kunci) {
+  const i = LANGKAH.findIndex((l) => l.kunci === kunci);
+  return i < 0 ? 99 : i;
+}
+
+function gambarLokasi() {
+  const wadah = el("isiLokasi");
+  const kartu = el("kartuLokasi");
+  const d = st.lokasi;
+  kartu.classList.remove("tegas", "hati");
+  if (!d) {
+    el("namaLokasi").textContent = "";
+    wadah.innerHTML = '<p class="ket redup" style="margin:0">Pilih lokasi di atas untuk melihat jawabannya.</p>';
+    return;
+  }
+
+  const l = d.lokasi;
+  el("namaLokasi").textContent = l.sumber === "koordinat" ? "dari GPS" : "kabupaten/kota";
+
+  const status = d.status || "aman";
+  const jenis = status === "terdampak" ? "bahaya" : status === "akan_terdampak" ? "akan" : "aman";
+  if (jenis === "bahaya") kartu.classList.add("tegas");
+  if (jenis === "akan") kartu.classList.add("hati");
+
+  // kena[] diurutkan supaya langkah paling awal muncul pertama
+  const kena = (d.kena || []).slice().sort(
+    (a, b) => urutanLangkah(a.kunci_pertama) - urutanLangkah(b.kunci_pertama));
+  const pertama = kena[0] || null;
+
+  let besar, sub;
+  if (status === "terdampak") {
+    besar = "Ya, ada abu di atas";
+    const permukaan = kena.some((k) => k.sampai_permukaan);
+    sub = "Saat ini " + esc(l.nama) + " berada di dalam area abu " +
+      esc(kena.map((k) => k.gunung).join(", ")) + ". " +
+      (permukaan
+        ? "Lapisan abunya menyentuh permukaan, jadi hujan abu ringan mungkin terjadi."
+        : "Abunya melintas di ketinggian dan tidak turun ke permukaan.");
+  } else if (status === "akan_terdampak") {
+    besar = "Belum, tapi diprakirakan masuk";
+    sub = "Sekarang " + esc(l.nama) + " di luar area abu, tetapi masuk poligon prakiraan VAAC " +
+      "dalam 18 jam ke depan" + (pertama ? " dari " + esc(pertama.gunung) : "") + ".";
+  } else {
+    besar = "Tidak, aman";
+    sub = (st.nasional && st.nasional.ringkasan && st.nasional.ringkasan.gunung_aktif)
+      ? esc(l.nama) + " berada di luar semua poligon abu VAAC, sekarang maupun dalam prakiraan 18 jam."
+      : esc(l.nama) + " aman — tidak ada advisory abu aktif dari VAAC Darwin saat ini.";
+  }
+
+  let html =
+    '<div class="jawab"><span style="color:var(--' +
+    (jenis === "bahaya" ? "bahaya" : jenis === "akan" ? "akan" : "aman") + ')">' +
+    ikon(jenis, 30) + "</span>" +
+    '<div class="teks"><div class="besar ' + jenis + '">' + esc(besar) + "</div>" +
+    '<div class="sub">' + sub + "</div></div></div>";
+
+  html += '<div class="blok">';
+  html += '<div class="baris"><span class="kunci">Lokasi</span><span class="nilai">' +
+    esc(l.nama) + (l.provinsi ? ' <span class="redup" style="font-weight:400">· ' +
+      esc(l.provinsi) + "</span>" : "") + "</span></div>";
+
+  if (l.sumber === "koordinat" && d.kabkota_terdekat) {
+    html += '<div class="baris"><span class="kunci">Kab/kota terdekat</span><span class="nilai">' +
+      esc(d.kabkota_terdekat.nama) + ' <span class="redup angka" style="font-weight:400">(' +
+      esc(jarakRingkas(d.kabkota_terdekat.jarak_km)) + ")</span></span></div>";
+  }
+
+  // 2. Kapan?
+  if (pertama) {
+    html += '<div class="baris"><span class="kunci">Kapan</span><span class="nilai">' +
+      esc(pertama.label_pertama) +
+      (pertama.berlaku_pertama
+        ? ' <span class="redup angka" style="font-weight:400">· ' +
+          esc(waktuLokal(pertama.berlaku_pertama, true)) + "</span>"
+        : "") + "</span></div>";
+  }
+
+  // 3. Seberapa tinggi / turun ke permukaan?
+  const tinggi = [];
+  kena.forEach((k) => (k.ketinggian || []).forEach((t) => {
+    if (!tinggi.some((x) => x.label === t.label)) tinggi.push(t);
+  }));
+  if (tinggi.length) {
+    html += '<div class="baris" style="display:block"><span class="kunci">Ketinggian abu</span>';
+    tinggi.sort((a, b) => (b.puncak_m || 0) - (a.puncak_m || 0)).forEach((t) => {
+      html += '<div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;' +
+        'margin-top:5px"><span class="angka" style="font-weight:700">' + esc(t.ringkas) + "</span>" +
+        (t.sampai_permukaan
+          ? keping("bahaya", "turun ke permukaan")
+          : '<span class="redup" style="font-size:11px">' + esc(t.label) + " · di ketinggian</span>") +
+        "</div>";
+    });
+    html += "</div>";
+  } else if (status === "aman" && d.terdekat) {
+    html += '<div class="baris"><span class="kunci">Abu terdekat</span><span class="nilai">' +
+      esc(d.terdekat.gunung) + ' <span class="redup angka" style="font-weight:400">· ' +
+      esc(jarakRingkas(d.terdekat.jarak_km)) + "</span></span></div>";
+  }
+
+  // Bandara terdekat + statusnya
+  if (d.bandara_terdekat) {
+    const b = d.bandara_terdekat;
+    html += '<div class="baris"><span class="kunci">Bandara terdekat</span><span class="nilai">' +
+      '<span class="angka">' + esc(b.iata) + "</span> " + esc(b.nama) +
+      ' <span class="redup angka" style="font-weight:400">· ' + esc(jarakRingkas(b.jarak_km)) +
+      "</span><br>" + (b.terdampak ? keping("bahaya", "Kena area abu") : keping("aman", "Aman")) +
+      "</span></div>";
+  }
+  html += "</div>";
+
+  wadah.innerHTML = html;
+}
+
+/* =====================================================================
+   (c) Ringkasan nasional
+   ===================================================================== */
+function gambarRingkasan() {
+  const r = (st.nasional && st.nasional.ringkasan) || {};
+  const ubin = [
+    [r.gunung_aktif, "Gunung dengan advisory aktif"],
+    [r.kabkota_terdampak, "Kabupaten/kota terdampak"],
+    [r.provinsi_terdampak, "Provinsi terdampak"],
+    [r.bandara_terdampak, "Bandara terdampak"]
+  ];
+  // Angka memakai token teks (putih), bukan warna status.
+  el("ubinRingkas").innerHTML = ubin.map(
+    (u) => '<div><div class="n">' + esc(angka(u[0] == null ? 0 : u[0])) + "</div>" +
+      '<div class="l">' + esc(u[1]) + "</div></div>").join("");
+
+  const cat = el("catatanPermukaan");
+  if (r.ada_lapisan_permukaan) {
+    cat.hidden = false;
+    cat.innerHTML = keping("bahaya", "Ada lapisan sampai permukaan") +
+      ' <span class="redup">Sebagian abu dilaporkan dari permukaan (SFC), bukan hanya di ketinggian.</span>';
+  } else {
+    cat.hidden = true;
+    cat.innerHTML = "";
+  }
+}
+
+/* =====================================================================
+   (d) Kartu gunung aktif
+   ===================================================================== */
+/* Konfirmasi BMKG untuk satu gunung.
+   Sengaja hanya teks dan TANPA ikon status: SIGMET tidak ikut menentukan poligon,
+   jarak, maupun status apa pun di halaman ini - semua itu tetap murni dari VAAC
+   Darwin. Memberinya ikon atau warna status akan membuatnya terbaca sebagai
+   peringatan tersendiri, padahal ia cuma penguat. Tanpa padanan, barisnya hilang. */
+function barisSigmet(s) {
+  if (!s) return "";
+  // Label zona ditulis sekali di ujung: "12:30–15:30 WIB", bukan diulang dua kali.
+  const jam = s.berlaku_dari && s.berlaku_sampai
+    ? waktuLokal(s.berlaku_dari).replace(/ (WIB|WITA|WIT)$/, "") + "–" +
+      waktuLokal(s.berlaku_sampai)
+    : null;
+  return '<br><span class="sigmet">BMKG juga menerbitkan SIGMET' +
+    (s.fir ? " " + esc(s.fir) : "") +
+    (jam ? " · berlaku " + esc(jam) : "") + "</span>";
+}
+
+function gambarDaftarGunung(paksa) {
+  const wadah = el("daftarGunung");
+  // jangan bongkar daftar kalau pengguna sedang menaruh fokus keyboard di dalamnya
+  if (!paksa && wadah.contains(document.activeElement) &&
+      document.activeElement !== document.body) return;
+  const gunung = (st.nasional && st.nasional.gunung) || [];
+  if (!gunung.length) {
+    wadah.innerHTML = '<div class="jawab"><span style="color:var(--aman)">' + ikon("aman", 22) +
+      '</span><div class="teks"><div class="besar aman" style="font-size:15px">' +
+      "Tidak ada advisory abu aktif</div>" +
+      '<div class="sub">VAAC Darwin sedang tidak menerbitkan VA ADVISORY untuk wilayah Indonesia.' +
+      "</div></div></div>";
+    return;
+  }
+
+  wadah.innerHTML = gunung.map((g) => {
+    const lap = lapisanLangkah(g, "obs").length ? lapisanLangkah(g, "obs") : lapisanLangkah(g, "f6");
+    const tinggi = [];
+    lap.forEach((x) => {
+      const t = x.ketinggian ? x.ketinggian.ringkas : x.fl_label;
+      if (t && tinggi.indexOf(t) < 0) tinggi.push(t);
+    });
+    const gerak = lap.map((x) => x.arah).filter(Boolean)[0];
+    const kt = lap.map((x) => x.kecepatan_kt).filter(Boolean)[0];
+    const dmp = g.dampak || { kabkota: 0, bandara: 0, provinsi: [] };
+    const permukaan = lap.some((x) => x.ketinggian && x.ketinggian.sampai_permukaan);
+
+    return '<button type="button" class="gunung" data-kode="' + esc(g.kode) + '" ' +
+      'aria-pressed="' + (st.fokus === g.kode ? "true" : "false") + '">' +
+      '<span class="atas"><span class="nm">' + esc(g.nama) + "</span>" +
+      '<span class="jam">terbit ' + esc(waktuLokal(g.terbit)) + "</span></span>" +
+      '<span class="rinci">' +
+      // pemisahnya "&" biasa: esc() yang mengubahnya jadi entitas, jangan ditulis
+      // sebagai &amp; di sini atau ia ter-escape dua kali dan tampil sebagai "&amp;"
+      "Abu <b>" + esc(tinggi.length ? tinggi.join(" & ") : "—") + "</b>" +
+      (permukaan ? " " + keping("bahaya", "sampai permukaan") : "") +
+      (gerak ? " · gerak ke <b>" + esc(arahKata(gerak)) +
+        (kt ? " " + kt + " kt" : "") + "</b>" : "") +
+      "<br>" + esc(angka(dmp.kabkota)) + " kab/kota · " + esc(angka(dmp.bandara)) +
+      " bandara terdampak" +
+      (dmp.provinsi && dmp.provinsi.length
+        ? '<br><span class="redup">' + esc(dmp.provinsi.slice(0, 4).join(", ")) +
+          (dmp.provinsi.length > 4 ? " +" + (dmp.provinsi.length - 4) + " lagi" : "") + "</span>"
+        : "") +
+      '<br><span class="redup">' + esc(umurTeks(g.terbit)) +
+      (g.obs_teramati ? " · abu teramati satelit" : " · abu diperkirakan (tertutup awan)") +
+      "</span>" +
+      barisSigmet(g.sigmet) +
+      "</span></button>";
+  }).join("");
+
+  wadah.querySelectorAll(".gunung").forEach((b) => {
+    b.addEventListener("click", () => aturFokus(b.dataset.kode));
+  });
+}
+
+/* =====================================================================
+   (e) Wilayah terdampak, dikelompokkan per provinsi
+   ===================================================================== */
+function gambarWilayah() {
+  const wadah = el("isiWilayah");
+  const d = st.nasional;
+  const kab = (d && d.terdampak && d.terdampak.kabkota) || [];
+  const prov = (d && d.terdampak && d.terdampak.provinsi) || [];
+  el("sisipWilayah").textContent = kab.length ? angka(kab.length) + " kab/kota" : "";
+
+  if (!kab.length) {
+    wadah.innerHTML = '<p class="ket redup" style="margin:0">' +
+      "Tidak ada kabupaten/kota yang berada di dalam area abu, sekarang maupun dalam prakiraan 18 jam." +
+      "</p>";
+    return;
+  }
+
+  // kelompokkan (urutan kabkota dari server sudah per provinsi lalu nama)
+  const grup = new Map();
+  kab.forEach((k) => {
+    if (!grup.has(k.provinsi)) grup.set(k.provinsi, []);
+    grup.get(k.provinsi).push(k);
+  });
+
+  // urutkan provinsi mengikuti urutan terdampak.provinsi (jumlah desc)
+  const urut = prov.length ? prov.map((p) => p.nama).filter((n) => grup.has(n)) : [];
+  grup.forEach((_, n) => { if (urut.indexOf(n) < 0) urut.push(n); });
+
+  wadah.innerHTML = urut.map((namaProv, i) => {
+    const isi = grup.get(namaProv) || [];
+    const adaSekarang = isi.some((k) => k.kunci_pertama === "obs");
+    return '<details class="prov"' + (i === 0 ? " open" : "") + ">" +
+      '<summary><span class="nm">' + esc(namaProv) + "</span>" +
+      '<span class="jml">' + esc(angka(isi.length)) + " kab/kota" +
+      (adaSekarang ? " · ada abu sekarang" : "") + "</span></summary>" +
+      '<div class="isi"><table class="tbl2"><caption class="tersembunyi">' +
+      "Kabupaten/kota terdampak di " + esc(namaProv) +
+      '</caption><thead><tr><th scope="col">Kab/Kota</th>' +
+      '<th scope="col">Mulai</th></tr></thead><tbody>' +
+      isi.map((k) =>
+        '<tr><th scope="row">' + esc(k.nama) +
+        '<span class="sub">' + esc(k.gunung) + " &middot; " + tinggiRingkas(k) + "</span></th>" +
+        '<td>' + esc(k.label_pertama) +
+        '<span class="sub angka">' +
+        esc(k.berlaku_pertama ? waktuLokal(k.berlaku_pertama, false, zonaProvinsi(k.provinsi)) : "—") +
+        "</span></td></tr>"
+      ).join("") +
+      "</tbody></table></div></details>";
+  }).join("");
+}
+
+/* =====================================================================
+   (f) Bandara terdampak
+   ===================================================================== */
+function gambarBandara() {
+  const wadah = el("isiBandara");
+  const bnd = (st.nasional && st.nasional.terdampak && st.nasional.terdampak.bandara) || [];
+  el("sisipBandara").textContent = bnd.length ? angka(bnd.length) + " bandara" : "";
+  if (!bnd.length) {
+    wadah.innerHTML = '<p class="ket redup" style="margin:0">' +
+      "Tidak ada bandara yang berada di dalam area abu dalam 18 jam ke depan.</p>";
+    return;
+  }
+  wadah.innerHTML =
+    '<table class="tbl2"><caption class="tersembunyi">' +
+    "Bandara yang berada di dalam area abu</caption>" +
+    '<thead><tr><th scope="col">Bandara</th>' +
+    '<th scope="col">Masuk area abu</th></tr></thead><tbody>' +
+    bnd.map((b) =>
+      '<tr><th scope="row"><span class="kode">' + esc(b.iata) + "</span> " + esc(b.nama) +
+      '<span class="sub">' + esc(b.gunung) + " &middot; " + tinggiRingkas(b) + "</span></th>" +
+      "<td>" + esc(b.label_pertama) +
+      '<span class="sub angka">' +
+      esc(b.berlaku_pertama ? waktuLokal(b.berlaku_pertama, false, zonaProvinsi(b.provinsi)) : "—") +
+      "</span></td></tr>"
+    ).join("") + "</tbody></table>";
+}
+
+/* =====================================================================
+   (g) Sumber: teks VA ADVISORY mentah, ditarik saat <details> dibuka
+   ===================================================================== */
+function gambarSumberMentah() {
+  const wadah = el("daftarMentah");
+  const gunung = (st.nasional && st.nasional.gunung) || [];
+  if (!gunung.length) {
+    wadah.innerHTML = '<p class="ket redup" style="margin:0">' +
+      "Tidak ada advisory aktif untuk ditampilkan.</p>";
+    return;
+  }
+  wadah.innerHTML = gunung.map((g) =>
+    '<details class="mentah" data-kode="' + esc(g.kode) + '">' +
+    "<summary>Teks VA ADVISORY asli — " + esc(g.nama) +
+    (g.advisory_nr ? " (nr " + esc(g.advisory_nr) + ")" : "") + "</summary>" +
+    '<div class="ket redup" style="margin-top:5px">' +
+    esc(g.detail_erupsi || "") + (g.catatan ? " · " + esc(g.catatan) : "") +
+    (g.info_source ? "<br>Sumber informasi: " + esc(g.info_source) : "") +
+    (g.grafik_url ? '<br><a href="' + esc(g.grafik_url) + '" target="_blank" rel="noopener">' +
+      "Grafik resmi BOM →</a>" : "") + "</div>" +
+    '<pre class="vaa">Memuat teks advisory…</pre></details>'
+  ).join("");
+
+  wadah.querySelectorAll("details.mentah").forEach((d) => {
+    d.addEventListener("toggle", async () => {
+      if (!d.open || d.dataset.terisi === "1") return;
+      d.dataset.terisi = "1";
+      const pre = d.querySelector("pre.vaa");
+      try {
+        const adv = await ambil("/api/gunung/" + encodeURIComponent(d.dataset.kode));
+        pre.textContent = adv.teks_mentah || "(advisory ini tidak memuat teks mentah)";
+      } catch (e) {
+        d.dataset.terisi = "";
+        pre.textContent = "Gagal memuat teks advisory: " + e.message;
+      }
+    });
+  });
+}
+
+/* =====================================================================
+   (a) Typeahead kabupaten/kota - memfilter 508 entri DI SISI KLIEN
+   ===================================================================== */
+function normal(s) { return String(s || "").toLowerCase().replace(/\s+/g, " ").trim(); }
+
+/* Penamaan OSM tidak konsisten: ada "Kota Bandung" dan "Kab Bogor" yang berawalan,
+   tapi "Makassar" dan "Sleman" tanpa awalan sama sekali. Supaya orang yang mengetik
+   "Kota Makassar" atau "Kabupaten Bogor" tetap menemukannya, awalan itu dibuang dari
+   kueri maupun dari nama wilayah saat dicocokkan. */
+function tanpaAwalan(s) {
+  return normal(s).replace(/^(kotamadya|kabupaten|kota|kab)\.?\s+/, "");
+}
+
+function cariKabkota(kueri) {
+  const q = normal(kueri);
+  const qi = tanpaAwalan(kueri);
+  if (q.length < 1 || !st.wilayah) return [];
+  const awal = [], tengah = [];
+  for (const k of st.wilayah.kabkota) {
+    const n = normal(k.nama);
+    const ni = tanpaAwalan(k.nama);
+    const idx = Math.min(...[n.indexOf(q), ni.indexOf(qi)].filter((x) => x >= 0).concat([99]));
+    if (idx === 0) awal.push(k);
+    else if (idx < 99) tengah.push(k);
+    else if (normal(k.provinsi).indexOf(q) === 0) tengah.push(k);
+    if (awal.length + tengah.length > 220) break;
+  }
+  return awal.concat(tengah).slice(0, 40);
+}
+
+function gambarSaran(daftar) {
+  const ul = el("daftarSaran");
+  const kotak = el("kotakCari");
+  st.saranTampil = daftar;
+  if (!daftar.length) {
+    if (normal(kotak.value).length >= 1) {
+      ul.hidden = false;
+      kotak.setAttribute("aria-expanded", "true");
+      ul.innerHTML = '<li class="kosong" role="presentation">Tidak ada kabupaten/kota yang cocok.</li>';
+    } else {
+      tutupSaran();
+    }
+    return;
+  }
+  ul.hidden = false;
+  kotak.setAttribute("aria-expanded", "true");
+  ul.innerHTML = daftar.map((k, i) =>
+    '<li id="saran-' + i + '" role="option" data-i="' + i + '" ' +
+    'aria-selected="' + (i === st.sorotSaran ? "true" : "false") + '">' +
+    "<span>" + esc(k.nama) + '</span><span class="prov">' + esc(k.provinsi) + "</span></li>").join("");
+  ul.querySelectorAll("li[data-i]").forEach((li) => {
+    li.addEventListener("mousedown", (ev) => {
+      ev.preventDefault();
+      pilihKabkota(st.saranTampil[Number(li.dataset.i)]);
+    });
+  });
+}
+
+function tutupSaran() {
+  const ul = el("daftarSaran");
+  ul.hidden = true;
+  ul.innerHTML = "";
+  st.sorotSaran = -1;
+  st.saranTampil = [];
+  el("kotakCari").setAttribute("aria-expanded", "false");
+  el("kotakCari").removeAttribute("aria-activedescendant");
+}
+
+function geserSorot(delta) {
+  if (!st.saranTampil.length) return;
+  st.sorotSaran = (st.sorotSaran + delta + st.saranTampil.length) % st.saranTampil.length;
+  const ul = el("daftarSaran");
+  ul.querySelectorAll("li[data-i]").forEach((li, i) => {
+    const aktif = i === st.sorotSaran;
+    li.setAttribute("aria-selected", aktif ? "true" : "false");
+    if (aktif) {
+      li.scrollIntoView({ block: "nearest" });
+      el("kotakCari").setAttribute("aria-activedescendant", li.id);
+    }
+  });
+}
+
+function pasangCari() {
+  const kotak = el("kotakCari");
+  kotak.addEventListener("input", () => {
+    st.sorotSaran = -1;
+    gambarSaran(cariKabkota(kotak.value));
+  });
+  kotak.addEventListener("keydown", (ev) => {
+    if (ev.key === "ArrowDown") { ev.preventDefault(); geserSorot(1); }
+    else if (ev.key === "ArrowUp") { ev.preventDefault(); geserSorot(-1); }
+    else if (ev.key === "Enter") {
+      const pilih = st.sorotSaran >= 0 ? st.saranTampil[st.sorotSaran] : st.saranTampil[0];
+      if (pilih) { ev.preventDefault(); pilihKabkota(pilih); }
+    } else if (ev.key === "Escape") { tutupSaran(); }
+  });
+  kotak.addEventListener("focus", () => {
+    if (kotak.value) gambarSaran(cariKabkota(kotak.value));
+  });
+  kotak.addEventListener("blur", () => setTimeout(tutupSaran, 120));
+}
+
+async function pilihKabkota(k) {
+  if (!k) return;
+  el("kotakCari").value = k.nama;
+  tutupSaran();
+  // provinsi ikut dikirim sebagai pembeda: ada nama yang dipakai dua daerah
+  // sekaligus (Banjar di Jawa Barat dan Banjar di Kalimantan Selatan).
+  await muatLokasi("/api/lokasi?kabkota=" + encodeURIComponent(k.nama) +
+    (k.provinsi ? "&provinsi=" + encodeURIComponent(k.provinsi) : ""),
+    "Memuat status " + k.nama + "…");
+}
+
+/* =====================================================================
+   Geolokasi
+   ===================================================================== */
+function pasangGps() {
+  el("tombolGps").addEventListener("click", () => {
+    const pesan = el("pesanLokasi");
+    if (!navigator.geolocation) {
+      pesan.textContent = "Peramban ini tidak mendukung penentuan lokasi. " +
+        "Silakan cari kabupaten/kota secara manual.";
+      return;
+    }
+    pesan.textContent = "Mencari lokasi Anda…";
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        muatLokasi("/api/lokasi?lat=" + latitude.toFixed(5) + "&lon=" + longitude.toFixed(5) +
+          "&nama=" + encodeURIComponent("Lokasi Anda"), "Menghitung status lokasi Anda…");
+      },
+      (err) => {
+        let t;
+        if (err.code === 1) {
+          t = "Izin lokasi ditolak. Halaman ini tidak bisa membaca posisi Anda. " +
+            "Aktifkan izin lokasi di pengaturan peramban, atau cari kabupaten/kota di kotak di bawah.";
+        } else if (err.code === 2) {
+          t = "Posisi tidak bisa ditentukan (sinyal GPS atau jaringan tidak tersedia). " +
+            "Silakan cari kabupaten/kota secara manual.";
+        } else if (err.code === 3) {
+          t = "Waktu pencarian lokasi habis. Coba lagi, atau cari kabupaten/kota secara manual.";
+        } else {
+          t = "Gagal menentukan lokasi. Silakan cari kabupaten/kota secara manual.";
+        }
+        pesan.textContent = t;
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+    );
+  });
+}
+
+/* =====================================================================
+   Pemuatan data
+   ===================================================================== */
+let urlLokasiTerakhir = null;
+
+async function muatLokasi(url, pesanTunggu) {
+  const pesan = el("pesanLokasi");
+  if (pesanTunggu) pesan.textContent = pesanTunggu;
+  try {
+    st.lokasi = await ambil(url);
+    urlLokasiTerakhir = url;
+    pesan.textContent = "";
+    gambarLokasi();
+    gambarPenandaLokasi();
+    // Zona waktu tampilan ikut lokasi yang dipilih, jadi apa pun yang memuat jam
+    // harus digambar ulang - kalau tidak, header dan tombol linimasa tetap memakai
+    // zona lokasi sebelumnya (atau WIB bawaan) dan jamnya meleset sampai 2 jam.
+    gambarJam();
+    gambarLinimasa();
+    gambarDaftarGunung();
+    const l = st.lokasi.lokasi;
+    if (l && !st.fokus) peta.setView([l.lat, l.lon], Math.max(peta.getZoom(), 7));
+  } catch (e) {
+    if (e.status === 404) {
+      pesan.textContent = "Kabupaten/kota itu tidak dikenal. Pilih dari daftar saran yang muncul.";
+    } else if (e.status === 422) {
+      pesan.textContent = "Koordinat tidak valid, jadi status lokasi tidak bisa dihitung.";
+    } else {
+      pesan.textContent = "Gagal memuat status lokasi: " + e.message;
+    }
+  }
+}
+
+async function muatNasional(pasKanPeta) {
+  try {
+    st.nasional = await ambil("/api/nasional");
+  } catch (e) {
+    el("lencanaNasional").className = "lencana";
+    el("lencanaNasional").innerHTML = ikon("akan", 15) +
+      "<span>Gagal memuat data: " + esc(e.message) + "</span>";
+    return;
+  }
+  // fokus dilepas kalau gunungnya sudah tidak ada di advisory terbaru
+  if (st.fokus && !(st.nasional.gunung || []).some((g) => g.kode === st.fokus)) st.fokus = null;
+
+  gambarLencana();
+  gambarJam();
+  gambarRingkasan();
+  gambarDaftarGunung(true);
+  gambarWilayah();
+  gambarBandara();
+  gambarSumberMentah();
+  gambarLinimasa();
+  gambarPeta(pasKanPeta);
+}
+
+async function mulai() {
+  siapkanPeta();
+  pasangCari();
+  pasangGps();
+
+  // /api/wilayah ditarik SEKALI, lalu difilter di sisi klien tiap ketikan
+  try {
+    st.wilayah = await ambil("/api/wilayah");
+  } catch (e) {
+    el("pesanLokasi").textContent = "Gagal memuat daftar wilayah: " + e.message;
+  }
+
+  await muatNasional(true);
+
+  setInterval(segarkanUmur, JAM_MS);
+  setInterval(async () => {
+    await muatNasional(false);
+    if (urlLokasiTerakhir) await muatLokasi(urlLokasiTerakhir, "");
+  }, SEGAR_MS);
+}
+
+/* Tinggi header dipakai CSS desktop untuk mengunci tinggi kerangka ke layar.
+   Diukur, bukan ditebak: header bisa jadi lebih tinggi kalau teksnya membungkus. */
+function ukurHeader() {
+  const h = document.querySelector("header");
+  if (h) document.documentElement.style.setProperty("--tinggi-header", h.offsetHeight + "px");
+}
+/* Panel Tentang: isi baris repo, atau buang barisnya kalau REPO_URL belum diisi. */
+function gambarTentang() {
+  const sel = el("tentangRepo");
+  if (!sel) return;
+  const baris = sel.closest(".baris");
+  if (!REPO_URL) { if (baris) baris.remove(); return; }
+  const tampil = REPO_URL.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  sel.innerHTML = '<a href="' + esc(REPO_URL) + '" target="_blank" rel="noopener noreferrer">' +
+    esc(tampil) + "</a>";
+}
+gambarTentang();
+
+ukurHeader();
+addEventListener("resize", ukurHeader);
+// Rujukannya WAJIB disimpan: ResizeObserver yang tidak dipegang variabel apa pun
+// boleh dikumpulkan sampah, dan pengamatannya diam-diam berhenti.
+let pengamatHeader = null;
+if (window.ResizeObserver) {
+  pengamatHeader = new ResizeObserver(ukurHeader);
+  pengamatHeader.observe(document.querySelector("header"));
+}
+
+mulai().catch((e) => {
+  el("lencanaNasional").className = "lencana";
+  el("lencanaNasional").innerHTML = ikon("akan", 15) +
+    "<span>Gagal memuat halaman: " + esc(e.message) + "</span>";
+});
+</script>
+</body>
+</html>
